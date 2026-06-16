@@ -1,0 +1,59 @@
+# This file is a project-specific reference for the engine/matchmaking sections.
+# Safest setup:
+#   1. Copy `config.yml.default` -> `config.yml`
+#   2. Copy the relevant sections from this file into `config.yml`
+#   3. Replace the token value
+#
+token: "replace_me"
+url: "https://lichess.org/"
+
+engine:
+  dir: "../.."
+  name: "CppBridge"
+  protocol: "homemade"
+  ponder: false
+  working_dir: "../.."
+  homemade_options: {}
+
+challenge:
+  concurrency: 1
+  sort_by: "best"
+  preference: "none"
+  accept_bot: true
+  only_bot: false
+  max_increment: 20
+  min_increment: 0
+  max_base: 1800
+  min_base: 0
+  max_days: 14
+  min_days: 1
+  variants:
+    - standard
+  time_controls:
+    - bullet
+    - blitz
+    - rapid
+    - classical
+    - correspondence
+  modes:
+    - casual
+    - rated
+  bullet_requires_increment: false
+  max_simultaneous_games_per_user: 5
+
+matchmaking:
+  allow_matchmaking: true
+  allow_during_games: false
+  challenge_variant: "standard"
+  challenge_timeout: 30
+  challenge_initial_time:
+    - 60
+    - 180
+  challenge_increment:
+    - 1
+    - 2
+  opponent_rating_difference: 300
+  rating_preference: "none"
+  challenge_mode: "random"
+  challenge_filter: none
+  include_challenge_block_list: false

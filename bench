@@ -1,0 +1,24 @@
+#!/bin/zsh
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$ROOT_DIR"
+
+should_build=0
+if (( $# > 0 )) && [[ "$1" == "--build" ]]; then
+  should_build=1
+  shift
+fi
+
+if (( $# > 0 )) && [[ "$1" == "minimax" ]]; then
+  shift
+  if (( should_build )); then
+    "$ROOT_DIR/build" --target bench_minimax
+  fi
+  exec "$ROOT_DIR/build-release/bench_minimax" "$@"
+fi
+
+if (( should_build )); then
+  "$ROOT_DIR/build" --target bench_time
+fi
+exec "$ROOT_DIR/build-release/bench_time" "$@"

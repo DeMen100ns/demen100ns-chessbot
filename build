@@ -1,0 +1,16 @@
+#!/bin/zsh
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+BUILD_DIR="$ROOT_DIR/build-release"
+cd "$ROOT_DIR"
+
+if [[ ! -f "$BUILD_DIR/CMakeCache.txt" ]]; then
+  cmake --preset release
+fi
+
+if (( $# == 0 )); then
+  cmake --build --preset release
+else
+  cmake --build --preset release "$@"
+fi

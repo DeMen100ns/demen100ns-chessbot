@@ -1,0 +1,13 @@
+#!/bin/zsh
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LICHESS_DIR="$ROOT_DIR/integrations/lichess-bot"
+
+cd "$LICHESS_DIR"
+
+if [[ -f ".venv/bin/activate" ]]; then
+    source ".venv/bin/activate"
+fi
+
+python3 lichess-bot.py --config config.yml "$@"

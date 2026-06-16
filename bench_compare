@@ -1,0 +1,171 @@
+#!/bin/zsh
+set -euo pipefail
+
+print_usage() {
+  cat <<'EOF'
+Usage:
+  ./bench_compare --old <old_source_dir> --new <new_source_dir> [options] time <min_depth> <max_depth> <positions>
+  ./bench_compare --old <old_source_dir> --new <new_source_dir> [options] minimax
+
+Options:
+  --skip-build     Reuse existing build dirs instead of rebuilding both trees
+  --warmup <n>     Hyperfine warmup runs (default: 5)
+  --runs <n>       Hyperfine measured runs (default: 10)
+
+Notes:
+  - Each source tree is configured into its own build dir: <source>/build-compare-release
+  - Both trees are built in Release mode before benchmarking unless --skip-build is used
+  - Run this from a quiet machine state for the cleanest numbers
+EOF
+}
+
+if ! command -v hyperfine >/dev/null 2>&1; then
+  echo "bench_compare error: hyperfine is not installed" >&2
+  exit 1
+fi
+
+old_source_dir=""
+new_source_dir=""
+skip_build=0
+warmup_runs=5
+measured_runs=10
+
+while (( $# > 0 )); do
+  case "$1" in
+    --old)
+      (( $# >= 2 )) || { print_usage >&2; exit 1; }
+      old_source_dir="$2"
+      shift 2
+      ;;
+    --new)
+      (( $# >= 2 )) || { print_usage >&2; exit 1; }
+      new_source_dir="$2"
+      shift 2
+      ;;
+    --skip-build)
+      skip_build=1
+      shift
+      ;;
+    --warmup)
+      (( $# >= 2 )) || { print_usage >&2; exit 1; }
+      warmup_runs="$2"
+      shift 2
+      ;;
+    --runs)
+      (( $# >= 2 )) || { print_usage >&2; exit 1; }
+      measured_runs="$2"
+      shift 2
+      ;;
+    --help|-h)
+      print_usage
+      exit 0
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+if [[ -z "$old_source_dir" || -z "$new_source_dir" || $# == 0 ]]; then
+  print_usage >&2
+  exit 1
+fi
+
+if [[ ! -d "$old_source_dir" || ! -d "$new_source_dir" ]]; then
+  echo "bench_compare error: both --old and --new must point to existing source directories" >&2
+  exit 1
+fi
+
+if [[ ! "$warmup_runs" =~ ^[0-9]+$ || ! "$measured_runs" =~ ^[0-9]+$ ]]; then
+  echo "bench_compare error: --warmup and --runs must be non-negative integers" >&2
+  exit 1
+fi
+
+benchmark_kind="$1"
+shift
+
+target_name=""
+command_suffix=()
+
+case "$benchmark_kind" in
+  time)
+    if (( $# != 3 )); then
+      print_usage >&2
+      exit 1
+    fi
+    target_name="bench_time"
+    command_suffix=("$1" "$2" "$3")
+    ;;
+  minimax)
+    if (( $# != 0 )); then
+      print_usage >&2
+      exit 1
+    fi
+    target_name="bench_minimax"
+    ;;
+  *)
+    print_usage >&2
+    exit 1
+    ;;
+esac
+
+old_source_dir="$(cd "$old_source_dir" && pwd)"
+new_source_dir="$(cd "$new_source_dir" && pwd)"
+old_build_dir="$old_source_dir/build-compare-release"
+new_build_dir="$new_source_dir/build-compare-release"
+
+configure_tree() {
+  local source_dir="$1"
+  local build_dir="$2"
+  cmake -S "$source_dir" -B "$build_dir" -DCMAKE_BUILD_TYPE=Release
+}
+
+build_target() {
+  local build_dir="$1"
+  local target="$2"
+  cmake --build "$build_dir" --target "$target"
+}
+
+if (( ! skip_build )); then
+  echo "Configuring old source: $old_source_dir"
+  configure_tree "$old_source_dir" "$old_build_dir"
+  echo "Configuring new source: $new_source_dir"
+  configure_tree "$new_source_dir" "$new_build_dir"
+
+  echo "Building $target_name in old source"
+  build_target "$old_build_dir" "$target_name"
+  echo "Building $target_name in new source"
+  build_target "$new_build_dir" "$target_name"
+fi
+
+old_binary="$old_build_dir/$target_name"
+new_binary="$new_build_dir/$target_name"
+
+if [[ ! -x "$old_binary" || ! -x "$new_binary" ]]; then
+  echo "bench_compare error: missing built benchmark binary" >&2
+  echo "  old: $old_binary" >&2
+  echo "  new: $new_binary" >&2
+  exit 1
+fi
+
+old_command="'$old_binary'"
+new_command="'$new_binary'"
+for arg in "${command_suffix[@]}"; do
+  old_command+=" '$arg'"
+  new_command+=" '$arg'"
+done
+
+echo "Comparing $benchmark_kind"
+echo "  old: $old_source_dir"
+echo "  new: $new_source_dir"
+echo "  target: $target_name"
+echo "  old build: $old_build_dir"
+echo "  new build: $new_build_dir"
+
+exec hyperfine \
+  --warmup "$warmup_runs" \
+  --runs "$measured_runs" \
+  --command-name old \
+  --command-name new \
+  "$old_command" \
+  "$new_command"

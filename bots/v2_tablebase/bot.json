@@ -1,0 +1,7 @@
+{
+  "name": "V2 Tablebase",
+  "protocol": "chess-bench-v1",
+  "entry": "./run.sh",
+  "args": [],
+  "cwd": "."
+}
