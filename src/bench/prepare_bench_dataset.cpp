@@ -1,8 +1,8 @@
-#include "bench/chess_io.h"
+#include "chess/io.h"
 #include "bench/chess_san.h"
 #include "bench/uci_engine.h"
 
-#include "chessboard.h"
+#include "chess/chessboard.h"
 
 #include <algorithm>
 #include <chrono>

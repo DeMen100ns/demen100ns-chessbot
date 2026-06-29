@@ -1,0 +1,17 @@
+# Object files
+*.o
+
+# Executables
+teki*
+*.exe
+
+# Folders
+exes
+build
+release
+.vscode
+
+# Misc. files
+.ycm_extra_conf.py
+.lvimrc
+tags

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "chessboard.h"
+#include "chess/chessboard.h"
 
 #include <optional>
 #include <string>

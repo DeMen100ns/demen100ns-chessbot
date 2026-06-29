@@ -1,6 +1,6 @@
 #include "bench/chess_san.h"
 
-#include "bench/chess_io.h"
+#include "chess/io.h"
 
 #include <algorithm>
 #include <cctype>
@@ -36,11 +36,6 @@ bool is_castling_move(const ChessBoard& board, const Move& move) {
     }
 
     return std::abs(move.to - move.from) == 2;
-}
-
-bool would_be_checkmate(const ChessBoard& board, const Move& move) {
-    const ChessBoard next = board.make_move(move);
-    return next.is_checkmate(next.turn);
 }
 
 char san_piece_letter(Piece piece) {
@@ -170,9 +165,10 @@ std::string move_to_san(const ChessBoard& board, const Move& move) {
 
     if (is_castling_move(board, move)) {
         std::string san = move.to > move.from ? "O-O" : "O-O-O";
-        if (would_be_checkmate(board, move)) {
+        const ChessBoard next = board.make_move(move);
+        if (next.is_checkmate(next.turn)) {
             san.push_back('#');
-        } else if (board.make_move(move).is_in_check(board.make_move(move).turn)) {
+        } else if (next.is_in_check(next.turn)) {
             san.push_back('+');
         }
         return san;

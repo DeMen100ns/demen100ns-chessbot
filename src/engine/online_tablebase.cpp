@@ -1,86 +1,19 @@
-#include "online_tablebase.h"
+#include "chess/online_tablebase.h"
 
 #include <array>
-#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <mutex>
 #include <optional>
-#include <sstream>
 #include <string>
 
+#include "chess/io.h"
 #include "tbprobe.h"
 
 namespace {
 
 namespace fs = std::filesystem;
-
-char piece_to_fen(Piece piece) {
-    switch (piece) {
-        case W_PAWN: return 'P';
-        case W_KNIGHT: return 'N';
-        case W_BISHOP: return 'B';
-        case W_ROOK: return 'R';
-        case W_QUEEN: return 'Q';
-        case W_KING: return 'K';
-        case B_PAWN: return 'p';
-        case B_KNIGHT: return 'n';
-        case B_BISHOP: return 'b';
-        case B_ROOK: return 'r';
-        case B_QUEEN: return 'q';
-        case B_KING: return 'k';
-        case EMPTY: break;
-    }
-    return '1';
-}
-
-std::string board_to_fen(const ChessBoard& board) {
-    std::ostringstream fen;
-
-    for (int rank = 7; rank >= 0; --rank) {
-        int empty_count = 0;
-        for (int file = 0; file < 8; ++file) {
-            const Piece piece = board.piece_at(rank * 8 + file);
-            if (piece == EMPTY) {
-                ++empty_count;
-                continue;
-            }
-
-            if (empty_count > 0) {
-                fen << empty_count;
-                empty_count = 0;
-            }
-            fen << piece_to_fen(piece);
-        }
-
-        if (empty_count > 0) {
-            fen << empty_count;
-        }
-        if (rank > 0) {
-            fen << '/';
-        }
-    }
-
-    fen << ' ' << (board.turn == WHITE ? 'w' : 'b') << ' ';
-
-    std::string castling;
-    if (board.white_can_castle_kingside) castling.push_back('K');
-    if (board.white_can_castle_queenside) castling.push_back('Q');
-    if (board.black_can_castle_kingside) castling.push_back('k');
-    if (board.black_can_castle_queenside) castling.push_back('q');
-    fen << (castling.empty() ? "-" : castling) << ' ';
-
-    if (board.en_passant_square >= 0 && board.en_passant_square < 64) {
-        fen << static_cast<char>('a' + (board.en_passant_square % 8))
-            << static_cast<char>('1' + (board.en_passant_square / 8));
-    } else {
-        fen << '-';
-    }
-
-    fen << ' ' << board.halfmove_clock << ' ' << board.turn_number;
-    return fen.str();
-}
 
 std::string shell_escape(const std::string& value) {
     std::string escaped = "'";
@@ -93,50 +26,6 @@ std::string shell_escape(const std::string& value) {
     }
     escaped.push_back('\'');
     return escaped;
-}
-
-std::optional<Move> move_from_uci(const std::string& uci) {
-    if (uci.size() < 4) {
-        return std::nullopt;
-    }
-
-    auto to_square = [](char file, char rank) -> int {
-        if (file < 'a' || file > 'h' || rank < '1' || rank > '8') {
-            return -1;
-        }
-        return (rank - '1') * 8 + (file - 'a');
-    };
-
-    const int from = to_square(uci[0], uci[1]);
-    const int to = to_square(uci[2], uci[3]);
-    if (from < 0 || to < 0) {
-        return std::nullopt;
-    }
-
-    Piece promotion = EMPTY;
-    if (uci.size() >= 5) {
-        const bool white_promotion = uci[3] == '8';
-        switch (static_cast<char>(std::tolower(static_cast<unsigned char>(uci[4])))) {
-            case 'q': promotion = white_promotion ? W_QUEEN : B_QUEEN; break;
-            case 'r': promotion = white_promotion ? W_ROOK : B_ROOK; break;
-            case 'b': promotion = white_promotion ? W_BISHOP : B_BISHOP; break;
-            case 'n': promotion = white_promotion ? W_KNIGHT : B_KNIGHT; break;
-            default: return std::nullopt;
-        }
-    }
-
-    return Move(from, to, promotion);
-}
-
-std::string trim(std::string value) {
-    while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back()))) {
-        value.pop_back();
-    }
-    std::size_t start = 0;
-    while (start < value.size() && std::isspace(static_cast<unsigned char>(value[start]))) {
-        ++start;
-    }
-    return value.substr(start);
 }
 
 bool looks_like_url(const std::string& value) {
@@ -243,24 +132,7 @@ std::optional<Move> choose_move_with_fathom(const ChessBoard& board,
         return std::nullopt;
     }
 
-    std::string uci = "a1a1";
-    uci[0] = static_cast<char>('a' + (move->from % 8));
-    uci[1] = static_cast<char>('1' + (move->from / 8));
-    uci[2] = static_cast<char>('a' + (move->to % 8));
-    uci[3] = static_cast<char>('1' + (move->to / 8));
-    if (move->promotion != EMPTY) {
-        switch (move->promotion) {
-            case W_QUEEN:
-            case B_QUEEN: uci.push_back('q'); break;
-            case W_ROOK:
-            case B_ROOK: uci.push_back('r'); break;
-            case W_BISHOP:
-            case B_BISHOP: uci.push_back('b'); break;
-            case W_KNIGHT:
-            case B_KNIGHT: uci.push_back('n'); break;
-            default: break;
-        }
-    }
+    const std::string uci = ChessIO::move_to_uci(*move);
 
     debug = "tb_fathom_hit_move=" + uci +
             " wdl=" + std::to_string(TB_GET_WDL(result)) +
@@ -341,7 +213,7 @@ std::optional<Move> OnlineTablebase::choose_move(const ChessBoard& board) const 
         }
     }
 
-    const std::string fen = board_to_fen(board);
+    const std::string fen = ChessIO::board_to_fen(board);
     if (const auto cache_it = move_cache.find(fen); cache_it != move_cache.end()) {
         last_probe_debug = cache_it->second.has_value()
             ? "tb_hit_cache"
@@ -375,14 +247,14 @@ std::optional<Move> OnlineTablebase::choose_move(const ChessBoard& board) const 
     }
     pclose(pipe);
 
-    const std::string uci = trim(output);
+    const std::string uci = ChessIO::trim(output);
     if (uci.empty() || uci == "none") {
         last_probe_debug = "tb_miss_empty";
         move_cache[fen] = std::nullopt;
         return std::nullopt;
     }
 
-    const auto move = move_from_uci(uci);
+    const auto move = ChessIO::move_from_uci(uci);
     last_probe_debug = move.has_value()
         ? "tb_hit_move=" + uci
         : "tb_probe_error=invalid_uci";

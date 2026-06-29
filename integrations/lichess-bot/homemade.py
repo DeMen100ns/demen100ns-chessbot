@@ -11,6 +11,7 @@ import os
 from typing import List
 from lib.engine_wrapper import MinimalEngine
 from lib.lichess_types import MOVE, HOMEMADE_ARGS_TYPE
+from lib import model
 import logging
 
 
@@ -48,10 +49,23 @@ def _move_info_for_chat(board: chess.Board, move: chess.Move) -> dict[str, str]:
     return {}
 
 
-def compute_time_budget_ms(board: chess.Board, time_limit: Limit) -> int:
+def _base_move_budget_ms(game: model.Game | None) -> int:
+    if game is None:
+        return 1000
+
+    if game.speed == "bullet":
+        return 500
+    if game.speed == "blitz":
+        return 1000
+    if game.speed == "rapid":
+        return 3000
+    return 1000
+
+
+def compute_time_budget_ms(board: chess.Board, time_limit: Limit, game: model.Game | None = None) -> int:
     """Allocate a safe per-move budget from the lichess clocks.
 
-    For clock games we aim to spend a fixed 1 second per move plus the full
+    For clock games we aim to spend a cadence-aware fixed budget plus the full
     increment, while still keeping a small reserve so we do not flag when the
     remaining main clock gets low.
     """
@@ -70,7 +84,7 @@ def compute_time_budget_ms(board: chess.Board, time_limit: Limit) -> int:
 
     reserve_ms = max(250, min(5000, my_inc_ms + 250, my_time_ms // 10))
     max_budget_ms = max(50, my_time_ms - reserve_ms)
-    target_budget_ms = max(50, 1000 + my_inc_ms)
+    target_budget_ms = max(50, _base_move_budget_ms(game) + my_inc_ms)
     return min(max_budget_ms, target_budget_ms)
 
 
@@ -156,8 +170,16 @@ class ComboEngine(ExampleEngine):
 class CppBridge(ExampleEngine):
     """Bridge lichess-bot to the local C++ engine executable."""
 
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(self,
+                 commands: HOMEMADE_ARGS_TYPE,
+                 options: object,
+                 stderr: int | None,
+                 draw_or_resign: object,
+                 game: model.Game | None,
+                 debug: bool,
+                 **popen_args: str) -> None:
+        super().__init__(commands, options, stderr, draw_or_resign, game, debug, **popen_args)
+        self.game = game
         project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
         release_binary = os.path.join(project_root, "build-release", "chess_engine_bridge")
         self.binary = os.getenv("CPP_CHESS_ENGINE_BIN", release_binary)
@@ -233,7 +255,7 @@ class CppBridge(ExampleEngine):
             "CPP_CHESS_ENGINE_MAX_DEPTH",
             os.getenv("CPP_CHESS_ENGINE_DEPTH", "64"),
         )
-        time_budget_ms = compute_time_budget_ms(board, time_limit)
+        time_budget_ms = compute_time_budget_ms(board, time_limit, self.game)
         history = build_position_history(board)
         logger.debug(
             "Calling persistent C++ bridge binary=%s depth=%s time_budget_ms=%d history_positions=%d",

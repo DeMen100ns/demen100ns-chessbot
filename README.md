@@ -1,96 +1,115 @@
 # Chess Bot
 
-Small C++ chess bot project with:
+C++ chess engine playground with a macOS UI, benchmark tooling, frozen bot snapshots, an optional NNUE evaluator, and a local bridge for `lichess-bot`.
 
-- a local engine layer
-- a simple macOS app UI with mouse input
-- a PGN-to-benchmark dataset tool
-- a macOS benchmark dashboard for bot-folder vs bot-folder matches
-- a vendored upstream `lichess-bot` bridge
+The bot's default search path uses `Minimax::evaluate()`, the handcrafted pre-NNUE evaluator. The NNUE implementation is still available as `Minimax::evaluate_nnue()` for experiments and regression checks, but it is not the default evaluator used by the bot.
 
-## Structure
+## Quick Start
+
+```bash
+./build
+./build-release/test_minimax
+./build-release/chess_engine_bridge \
+  --fen "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" \
+  --depth 3 \
+  --time-limit-ms 250
+```
+
+Expected bridge output is a UCI move such as `g1f3`.
+
+## Project Layout
 
 ```text
-include/chess/               public headers
-include/bench/               benchmark-only headers
-src/engine/                  chess engine core
-src/ui/                      macOS app UI
-src/app/                     executable entry points
-src/bench/                   benchmark tools + benchmark UI
-perft/                       standalone perft CLI + helper script
-data/                        local PGN + generated benchmark datasets
-integrations/lichess-bot/    vendored upstream Python bridge
-tests/                       engine + integration tests
-config/                      example config files
+include/chess/               public engine headers
+src/engine/                  board, move generation, search, evaluation
+src/app/                     CLI and app entry points
+src/ui/                      macOS game UI
+src/bench/                   bot protocol, benchmark UI, dataset tooling
+src/bench-time/              timing benchmarks
+tests/                       assert-based engine tests
+perft/                       perft CLI and helper script
+bots/                        benchable bot snapshots and adapters
+nnue/                        NNUE training/evaluation scripts and artifacts
+integrations/lichess-bot/    vendored lichess-bot integration
+third_party/                 tablebase probing dependency
+tools/                       tablebase probe helpers
+data/                        small datasets plus local ignored raw data
 ```
 
 ## Build
 
-Use the root build helper so outputs stay consistent with the `Release` CMake build:
+The root helper configures and builds the Release preset into `build-release/`.
 
 ```bash
 ./build
 ```
 
-Build one target only:
+Build one target:
 
 ```bash
 ./build --target chess_engine_bridge
 ./build --target chess_app
 ./build --target chess_bench_app
 ./build --target prepare_bench_dataset
+./build --target test_minimax_regression
 ```
 
-## Build The Benchmark Dataset Tool
+Direct CMake is also supported:
 
 ```bash
-./build --target prepare_bench_dataset
+cmake --preset release
+cmake --build --preset release
 ```
 
-Example usage:
+## Test
+
+Useful smoke suite:
 
 ```bash
-export CHESS_STOCKFISH_PATH=/absolute/path/to/stockfish
-./build-release/prepare_bench_dataset \
-  --input data/lichess_db_standard_rated_2014-01.pgn \
-  --output data/bench_positions.json \
-  --target-count 1000 \
-  --eval-depth 10 \
-  --min-cp -30 \
-  --max-cp 30
+./build --target test_chessboard test_minimax test_minimax_regression test_minimax_tt
+./build-release/test_chessboard
+./build-release/test_minimax
+./build-release/test_minimax_regression
+./build-release/test_minimax_tt
 ```
 
-Each saved position includes:
+`test_minimax_regression` checks both the default handcrafted evaluator and the standalone NNUE evaluator for deterministic behavior.
 
-- `fen_history`
-- `opening_name`
-- `move_number`
-- `game_url`
-- `selected_move_san` / `selected_move_uci`
-- `stockfish_eval_cp`
+## Run The Engine Bridge
 
-## Build The Benchmark UI
+`chess_engine_bridge` is the CLI used by benchmark adapters and the Lichess bridge.
+
+```bash
+./build --target chess_engine_bridge
+./build-release/chess_engine_bridge \
+  --fen "<FEN>" \
+  --depth 4 \
+  --time-limit-ms 1000
+```
+
+It prints the selected move in UCI notation. With `--serve`, it speaks the local tab-separated benchmark protocol over stdin/stdout.
+
+## Run The Apps
+
+macOS game UI:
+
+```bash
+./build --target chess_app
+./build-release/chess_app.app/Contents/MacOS/chess_app
+```
+
+Benchmark UI:
 
 ```bash
 ./build --target chess_bench_app
+./build-release/chess_bench_app.app/Contents/MacOS/chess_bench_app
 ```
 
-The benchmark app reads two bot folders, launches each one as a child process, and runs the saved dataset positions as Bot A vs Bot B.
+In the benchmark UI, set a dataset such as `data/bench_positions_generated.json`, then choose two folders under `bots/`.
 
-## Run Perft
+## Benchmarks
 
-```bash
-./perft/run.sh --depth 4
-```
-
-Optional flags:
-
-- `--fen "<fen>"` to run perft on a custom position
-- `--divide` to print the root move breakdown
-
-## Run Benchmarks
-
-Use the root `bench` helper so you always hit the current `Release` binaries:
+Timing helper:
 
 ```bash
 ./bench 4 4 10
@@ -98,35 +117,24 @@ Use the root `bench` helper so you always hit the current `Release` binaries:
 ./bench --build 4 4 10
 ```
 
-`./bench` runs the existing `build-release` binaries directly.
-Use `./bench --build ...` only when you want to rebuild first.
+Perft:
 
-To compare an old source tree against a new one fairly, use two separate source folders and let
-`hyperfine` alternate the commands:
+```bash
+./perft/run.sh --depth 4
+./perft/run.sh --depth 4 --divide
+./perft/run.sh --fen "<FEN>" --depth 5
+```
+
+Compare two source trees:
 
 ```bash
 ./bench_compare --old /path/to/chess-old --new /path/to/chess-new time 4 4 10
 ./bench_compare --old /path/to/chess-old --new /path/to/chess-new minimax
 ```
 
-`./bench_compare` configures each tree into its own `build-compare-release/` directory and builds
-the matching Release benchmark target before timing it. Add `--skip-build` if both trees are
-already built and you only want to re-run the benchmark.
-
 ## Bot Folder Contract
 
-Each benchable bot should live in its own folder and include a `bot.json` manifest.
-
-Example:
-
-```text
-bots/
-  my_bot/
-    bot.json
-    run.sh
-```
-
-Example `bot.json`:
+Each benchable bot folder contains a `bot.json` manifest and an executable entry, usually `run.sh`.
 
 ```json
 {
@@ -138,103 +146,100 @@ Example `bot.json`:
 }
 ```
 
-The launched process must:
+The process must read stdin commands and support:
 
-- read commands from stdin
-- support `ping`, `newgame`, `go`, and `quit`
-- return `bestmove\t<uci>` for each `go` command
+- `ping`
+- `newgame`
+- `go`
+- `quit`
 
-The repo already includes a working sample at `bots/v1_baseline/`.
+For each `go`, it should return:
 
-## Build The Upstream Bridge Adapter
+```text
+bestmove	<uci>
+```
+
+Included folders cover local engine snapshots, Stockfish adapter support, and external bots used for comparison.
+
+## Stockfish Adapter
+
+`bots/stockfish` adapts a local UCI Stockfish binary to the benchmark protocol.
+
+```bash
+export CHESS_STOCKFISH_PATH=/absolute/path/to/stockfish
+export STOCKFISH_ELO=1600
+export STOCKFISH_BENCH_MOVETIME_MS=50
+```
+
+If `CHESS_STOCKFISH_PATH` is unset, the adapter checks common Homebrew paths and then `stockfish` from `PATH`.
+
+## NNUE
+
+NNUE code lives under `nnue/`.
+
+Common workflow:
+
+```bash
+python3 nnue/train_basic_nnue.py --help
+./build --target nnue_evaluate_fens
+```
+
+Generated weights are exported into:
+
+```text
+include/chess/nnue_basic_weights.h
+```
+
+The engine keeps both evaluators:
+
+- `Minimax::evaluate()` is the default handcrafted evaluator used by search.
+- `Minimax::evaluate_nnue()` runs the embedded NNUE evaluator for experiments/tests.
+
+## Lichess Bot
+
+The vendored integration is in `integrations/lichess-bot/`.
+
+Setup:
 
 ```bash
 ./build --target chess_engine_bridge
+cd integrations/lichess-bot
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp config.yml.default config.yml
 ```
 
-## Run
-
-macOS app:
+Then copy the project-specific `engine`, `challenge`, and `matchmaking` settings from `config.yml.project.example` into `config.yml`, add your token, and run:
 
 ```bash
-./build-release/chess_app.app/Contents/MacOS/chess_app
+python3 lichess-bot.py
 ```
 
-Benchmark app:
-
-```bash
-./build-release/chess_bench_app.app/Contents/MacOS/chess_bench_app
-```
-
-Suggested first run:
-
-1. Build `chess_engine_bridge`
-2. Open `./build-release/chess_bench_app.app/Contents/MacOS/chess_bench_app`
-3. Set `Dataset` to `data/bench_positions_generated.json`
-4. Set `Bot A folder` to `bots/v1_baseline`
-5. Set `Bot B folder` to another bot folder that follows the same manifest contract
-6. Click `Start Bench`
-
-The macOS app lets you:
-
-- choose `Human` or `Computer` for White
-- choose `Human` or `Computer` for Black
-- play by clicking a piece and then clicking a destination square
-
-## Custom Piece PNGs
-
-The macOS app will look for PNG files in `assets/pieces/` first, then fall back to the built-in rendered pieces.
-
-Supported filenames:
-
-- `wp.png`
-- `wn.png`
-- `wb.png`
-- `wr.png`
-- `wq.png`
-- `wk.png`
-- `bp.png`
-- `bn.png`
-- `bb.png`
-- `br.png`
-- `bq.png`
-- `bk.png`
-
-The app will also use `assets/boards/board.png` for the board background if that file exists.
-
-## CMake
-
-If `cmake` is installed on your machine, the repo also includes a `CMakeLists.txt` with the engine, bridge, dataset tool, and both macOS app targets.
-
-## Vendored `lichess-bot`
-
-This repo now also contains a vendored copy of:
-
-- https://github.com/lichess-bot-devs/lichess-bot
-
-Path:
-
-- `integrations/lichess-bot/`
-
-Added locally on top of upstream:
-
-- `CppBridge` in `integrations/lichess-bot/homemade.py`
-- `config.yml.project.example`
-- `README.local.md`
-
-Recommended usage:
-
-1. Build `chess_engine_bridge`
-2. `cd integrations/lichess-bot`
-3. `python3 -m venv .venv && source .venv/bin/activate`
-4. `pip install -r requirements.txt`
-5. `cp config.yml.default config.yml`
-6. Copy the project-specific `engine`, `challenge`, and `matchmaking` settings from `config.yml.project.example`
-7. Put your token in `config.yml`
-8. `python3 lichess-bot.py`
-
-Shortcut from the project root:
+From the project root, the shortcut is:
 
 ```bash
 ./run_lichess
 ```
+
+Optional bridge overrides:
+
+```bash
+export CPP_CHESS_ENGINE_BIN=/absolute/path/to/build-release/chess_engine_bridge
+export CPP_CHESS_ENGINE_DEPTH=3
+```
+
+## Local Files And Large Data
+
+The repository intentionally ignores local configuration, build outputs, logs, virtual environments, and raw heavy data.
+
+Notable ignored files/directories:
+
+- `.env`, `.env.*`, `.vscode/`
+- `build/`, `build-*/`, `cmake-build-*/`
+- `integrations/lichess-bot/config.yml`
+- `integrations/lichess-bot/.venv/`
+- `lichess_bot_auto_logs/`
+- `data/lichess_db_standard_rated_2014-01.pgn`
+
+Keep raw PGN/tablebase/training files larger than 100 MB local unless they are deliberately moved to a proper large-file storage flow.

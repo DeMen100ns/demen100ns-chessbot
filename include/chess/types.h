@@ -28,5 +28,6 @@ struct Move {
     int to;
     Piece promotion;
 
+    Move() = default;
     Move(int f, int t, Piece p = EMPTY) : from(f), to(t), promotion(p) {}
 };

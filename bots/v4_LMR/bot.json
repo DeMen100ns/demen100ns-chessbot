@@ -1,0 +1,7 @@
+{
+  "name": "V4 LMR",
+  "protocol": "chess-bench-v1",
+  "entry": "./run.sh",
+  "args": [],
+  "cwd": "."
+}

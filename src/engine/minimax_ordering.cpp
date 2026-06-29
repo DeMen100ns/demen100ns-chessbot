@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 
 namespace {
 
@@ -18,6 +19,10 @@ struct AttackerInfo {
     int square;
     int value;
 };
+
+constexpr int kPromotionBand = 3000000;
+constexpr int kWinningCaptureBand = 2000000;
+constexpr int kLosingCaptureBand = -2000000;
 
 Bitboard attackers_to_square(const PieceBitboards& piece_bitboards,
                              Bitboard occupied,
@@ -100,34 +105,43 @@ int killer_move_bonus(const Move& move, const KillerSlot& killer_slot) {
     return 0;
 }
 
+int counter_move_bonus(const Move& move, const std::optional<Move>& counter_move) {
+    if (counter_move.has_value() && same_move(move, *counter_move)) {
+        return 8500;
+    }
+    return 0;
+}
+
 int move_order_score(const ChessBoard& board, const Move& move) {
     int score = 0;
 
     if (move.promotion != EMPTY) {
-        score += 100000 + piece_value(move.promotion);
+        score += kPromotionBand + piece_value(move.promotion);
     }
 
     if (is_capture_move(board, move)) {
-        score += mvv_lva_score(board, move);
+        const int see = static_exchange_eval(board, move);
+        const int capture_band = see >= 0 ? kWinningCaptureBand : kLosingCaptureBand;
+        score += capture_band + mvv_lva_score(board, move) + see;
     }
 
     return score;
 }
 
 template <typename ScoreMove>
-void sort_by_cached_score(std::vector<Move>& moves, ScoreMove score_move) {
-    std::vector<ScoredMove> scored_moves;
-    scored_moves.reserve(moves.size());
-    for (const Move& move : moves) {
-        scored_moves.push_back({move, score_move(move)});
+void sort_by_cached_score(MoveList& moves, ScoreMove score_move) {
+    std::array<ScoredMove, MoveList::kCapacity> scored_moves;
+    for (std::size_t i = 0; i < moves.size(); ++i) {
+        scored_moves[i] = {moves[i], score_move(moves[i])};
     }
 
-    std::sort(scored_moves.begin(), scored_moves.end(), [](const ScoredMove& lhs,
-                                                           const ScoredMove& rhs) {
-        return lhs.score > rhs.score;
-    });
+    std::sort(scored_moves.begin(),
+              scored_moves.begin() + static_cast<std::ptrdiff_t>(moves.size()),
+              [](const ScoredMove& lhs, const ScoredMove& rhs) {
+                  return lhs.score > rhs.score;
+              });
 
-    for (std::size_t i = 0; i < scored_moves.size(); ++i) {
+    for (std::size_t i = 0; i < moves.size(); ++i) {
         moves[i] = scored_moves[i].move;
     }
 }
@@ -213,50 +227,34 @@ int static_exchange_eval(const ChessBoard& board, const Move& move) {
 }
 
 bool is_checking_move(const ChessBoard& board, const Move& move) {
-    const ChessBoard next = board.make_move(move);
-    return next.is_in_check(next.turn);
+    return is_checking_move_fast(board, move);
 }
 
 bool same_move(const Move& lhs, const Move& rhs) {
     return lhs.from == rhs.from && lhs.to == rhs.to && lhs.promotion == rhs.promotion;
 }
 
-bool is_tactical_move(const ChessBoard& board, const Move& move) {
-    if (move.promotion != EMPTY) {
-        return true;
-    }
-
-    if (is_capture_move(board, move)) {
-        return true;
-    }
-
-    return is_en_passant_move(board, move);
-}
-
-void order_moves(const ChessBoard& board, std::vector<Move>& moves) {
+void order_moves(const ChessBoard& board, MoveList& moves) {
     sort_by_cached_score(moves, [&](const Move& move) {
         return move_order_score(board, move);
     });
 }
 
 void order_moves(const ChessBoard& board,
-                 std::vector<Move>& moves,
+                 MoveList& moves,
                  const KillerSlot& killer_slot,
                  const HistoryForSide& history_for_side) {
     sort_by_cached_score(moves, [&](const Move& move) {
         const int base_score = move_order_score(board, move);
-        if (base_score != 0) {
-            return base_score;
-        }
-
-        return killer_move_bonus(move, killer_slot) +
+        return base_score +
+               killer_move_bonus(move, killer_slot) +
                history_for_side[static_cast<std::size_t>(move.from)]
                                [static_cast<std::size_t>(move.to)];
     });
 }
 
 void order_moves(const ChessBoard& board,
-                 std::vector<Move>& moves,
+                 MoveList& moves,
                  const std::optional<Move>& tt_move) {
     order_moves(board, moves);
     if (!tt_move.has_value()) {
@@ -272,11 +270,19 @@ void order_moves(const ChessBoard& board,
 }
 
 void order_moves(const ChessBoard& board,
-                 std::vector<Move>& moves,
+                 MoveList& moves,
                  const std::optional<Move>& tt_move,
                  const KillerSlot& killer_slot,
-                 const HistoryForSide& history_for_side) {
-    order_moves(board, moves, killer_slot, history_for_side);
+                 const HistoryForSide& history_for_side,
+                 const std::optional<Move>& counter_move) {
+    sort_by_cached_score(moves, [&](const Move& move) {
+        const int base_score = move_order_score(board, move);
+        return base_score +
+               killer_move_bonus(move, killer_slot) +
+               counter_move_bonus(move, counter_move) +
+               history_for_side[static_cast<std::size_t>(move.from)]
+                               [static_cast<std::size_t>(move.to)];
+    });
     if (!tt_move.has_value()) {
         return;
     }

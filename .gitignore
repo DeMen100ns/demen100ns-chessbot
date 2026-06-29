@@ -2,9 +2,14 @@ build/
 build-*/
 cmake-build-*/
 
+.DS_Store
+.vscode/
+
 .env
+.env.*
 config/*.env
 !config/lichess.example.env
+*.local
 
 Lichess_api.txt
 src/lichess_api
@@ -19,3 +24,9 @@ integrations/lichess-bot/config.yml
 integrations/lichess-bot/.venv/
 
 data/lichess_db_standard_rated_2014-01.pgn
+
+__pycache__/
+*.py[cod]
+*.log
+lichess_bot_auto_logs/
+src/bench/result.txt

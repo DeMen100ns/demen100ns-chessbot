@@ -1,7 +1,7 @@
 #import <Cocoa/Cocoa.h>
 
 #include "chess/gui_app.h"
-#include "bot.h"
+#include "chess/bot.h"
 
 #include <cstdlib>
 #include <cctype>
@@ -12,6 +12,7 @@ namespace {
 constexpr CGFloat kPieceScale = 0.88;
 constexpr CGFloat kDragPieceScale = 0.94;
 constexpr CGFloat kPieceYOffsetFactor = 0.01;
+constexpr int kGuiSearchTimeLimitMs = 24 * 60 * 60 * 1000;
 
 enum class PlayerMode {
     Human,
@@ -498,7 +499,7 @@ NSImage* LoadPieceAsset(Piece piece, CGFloat cellSize) {
 
         const ChessBoard snapshot = strongSelf->_board;
         const Bot bot = strongSelf->_bot;
-        Move bestMove = bot.choose_move(snapshot);
+        Move bestMove = bot.choose_move(snapshot, bot.depth, kGuiSearchTimeLimitMs);
 
         dispatch_async(dispatch_get_main_queue(), ^{
             ChessBoardView* innerSelf = weakSelf;

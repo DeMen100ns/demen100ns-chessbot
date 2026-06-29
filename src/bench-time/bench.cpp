@@ -1,6 +1,7 @@
 #include "chess/chessboard.h"
 #include "chess/minimax.h"
 
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -85,6 +86,9 @@ void print_header() {
               << std::setw(8) << "depth"
               << std::setw(16) << "total nodes"
               << std::setw(16) << "total qnodes"
+              << std::setw(20) << "total search nodes"
+              << std::setw(14) << "elapsed ms"
+              << std::setw(14) << "total Mn/s"
               << std::setw(16) << "total leaves"
               << std::setw(16) << "total qleaves"
               << std::setw(20) << "avg nodes/position"
@@ -96,13 +100,23 @@ void print_header() {
 
 void print_row(int depth,
                const Minimax::NodeStats& total,
-               std::size_t position_count) {
+               std::size_t position_count,
+               double elapsed_ms) {
     const double positions = static_cast<double>(position_count);
+    const std::uint64_t total_search_nodes = total.nodes + total.qnodes;
+    const double elapsed_seconds = elapsed_ms / 1000.0;
+    const double total_mnps =
+        elapsed_seconds > 0.0
+            ? static_cast<double>(total_search_nodes) / elapsed_seconds / 1000000.0
+            : 0.0;
 
     std::cout << std::left
               << std::setw(8) << depth
               << std::setw(16) << total.nodes
               << std::setw(16) << total.qnodes
+              << std::setw(20) << total_search_nodes
+              << std::setw(14) << std::fixed << std::setprecision(3) << elapsed_ms
+              << std::setw(14) << std::fixed << std::setprecision(3) << total_mnps
               << std::setw(16) << total.leaves
               << std::setw(16) << total.qleaves
               << std::setw(20) << std::fixed << std::setprecision(2)
@@ -143,11 +157,12 @@ int main(int argc, char* argv[]) {
 
         for (int depth = min_depth; depth <= max_depth; ++depth) {
             Minimax::NodeStats total_stats;
+            const auto start = std::chrono::steady_clock::now();
 
             for (const std::string& fen : fens) {
                 const ChessBoard board(fen);
                 Minimax engine(depth);
-                (void)engine.find_best_move(board, depth);
+                (void)engine.find_best_move(board, depth, 0);
                 const Minimax::NodeStats& stats = engine.get_last_node_stats();
                 total_stats.nodes += stats.nodes;
                 total_stats.qnodes += stats.qnodes;
@@ -155,7 +170,11 @@ int main(int argc, char* argv[]) {
                 total_stats.qleaves += stats.qleaves;
             }
 
-            print_row(depth, total_stats, fens.size());
+            const auto end = std::chrono::steady_clock::now();
+            const double elapsed_ms =
+                std::chrono::duration<double, std::milli>(end - start).count();
+
+            print_row(depth, total_stats, fens.size(), elapsed_ms);
         }
     } catch (const std::exception& ex) {
         std::cerr << "bench_time error: " << ex.what() << '\n';

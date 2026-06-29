@@ -1,5 +1,5 @@
-#include "chessboard.h"
-#include "minimax.h"
+#include "chess/chessboard.h"
+#include "chess/minimax.h"
 
 #include <array>
 #include <chrono>
@@ -30,7 +30,7 @@ int main() {
             const ChessBoard board(fen);
             Minimax engine(depth);
             const auto start = std::chrono::steady_clock::now();
-            (void)engine.find_best_move(board, depth);
+            (void)engine.find_best_move(board, depth, 0);
             const auto end = std::chrono::steady_clock::now();
             total_ms += elapsed_ms(start, end);
         }

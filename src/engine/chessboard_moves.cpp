@@ -1,4 +1,4 @@
-#include "chessboard.h"
+#include "chess/chessboard.h"
 
 #include "chess/attacks.h"
 #include "chessboard_internal.h"
@@ -7,7 +7,9 @@
 #include <array>
 #include <cassert>
 
-void add_promotion_moves(std::vector<Move>& moves, int from, int to, Color color) {
+using PieceBitboards = std::array<Bitboard, 13>;
+
+void add_promotion_moves(MoveList& moves, int from, int to, Color color) {
     if (color == WHITE) {
         moves.emplace_back(from, to, W_QUEEN);
         moves.emplace_back(from, to, W_ROOK);
@@ -22,7 +24,7 @@ void add_promotion_moves(std::vector<Move>& moves, int from, int to, Color color
     moves.emplace_back(from, to, B_KNIGHT);
 }
 
-void add_pawn_move(std::vector<Move>& moves, int from, int to, Color color) {
+void add_pawn_move(MoveList& moves, int from, int to, Color color) {
     const int promotion_row = (color == WHITE) ? 7 : 0;
     if (row_of(to) == promotion_row) {
         add_promotion_moves(moves, from, to, color);
@@ -32,7 +34,7 @@ void add_pawn_move(std::vector<Move>& moves, int from, int to, Color color) {
     moves.emplace_back(from, to);
 }
 
-void append_targets(std::vector<Move>& moves, int from, Bitboard targets) {
+void append_targets(MoveList& moves, int from, Bitboard targets) {
     Bitboard remaining = targets;
     while (remaining != 0) {
         moves.emplace_back(from, pop_lsb(remaining));
@@ -74,6 +76,31 @@ Bitboard attackers_to_square(const ChessBoard& board,
                  (board.piece_bitboard(bishop) | board.piece_bitboard(queen));
     attackers |= rook_attacks(square, occupied) &
                  (board.piece_bitboard(rook) | board.piece_bitboard(queen));
+    return attackers;
+}
+
+Bitboard attackers_to_square(const PieceBitboards& piece_bitboards,
+                             int square,
+                             Color by_color,
+                             Bitboard occupied) {
+    const Bitboard target = square_bb(square);
+    const Piece pawn = by_color == WHITE ? W_PAWN : B_PAWN;
+    const Piece knight = by_color == WHITE ? W_KNIGHT : B_KNIGHT;
+    const Piece bishop = by_color == WHITE ? W_BISHOP : B_BISHOP;
+    const Piece rook = by_color == WHITE ? W_ROOK : B_ROOK;
+    const Piece queen = by_color == WHITE ? W_QUEEN : B_QUEEN;
+    const Piece king = by_color == WHITE ? W_KING : B_KING;
+
+    Bitboard attackers = pawn_attacks(target, opposite_color(by_color)) &
+                         piece_bitboards[static_cast<std::size_t>(pawn)];
+    attackers |= knight_attacks(square) & piece_bitboards[static_cast<std::size_t>(knight)];
+    attackers |= king_attacks(square) & piece_bitboards[static_cast<std::size_t>(king)];
+    attackers |= bishop_attacks(square, occupied) &
+                 (piece_bitboards[static_cast<std::size_t>(bishop)] |
+                  piece_bitboards[static_cast<std::size_t>(queen)]);
+    attackers |= rook_attacks(square, occupied) &
+                 (piece_bitboards[static_cast<std::size_t>(rook)] |
+                  piece_bitboards[static_cast<std::size_t>(queen)]);
     return attackers;
 }
 
@@ -124,7 +151,7 @@ bool is_slider(Piece piece) {
 }
 
 void append_legal_evasion(const ChessBoard& board,
-                          std::vector<Move>& moves,
+                          MoveList& moves,
                           const Move& move,
                           Color color) {
     const ChessBoard next = board.make_move(move);
@@ -133,8 +160,33 @@ void append_legal_evasion(const ChessBoard& board,
     }
 }
 
+void append_legal_pawn_evasion(const ChessBoard& board,
+                               MoveList& moves,
+                               int from,
+                               int target,
+                               Color color) {
+    const int promotion_row = (color == WHITE) ? 7 : 0;
+    if (row_of(target) != promotion_row) {
+        append_legal_evasion(board, moves, Move(from, target), color);
+        return;
+    }
+
+    if (color == WHITE) {
+        append_legal_evasion(board, moves, Move(from, target, W_QUEEN), color);
+        append_legal_evasion(board, moves, Move(from, target, W_ROOK), color);
+        append_legal_evasion(board, moves, Move(from, target, W_BISHOP), color);
+        append_legal_evasion(board, moves, Move(from, target, W_KNIGHT), color);
+        return;
+    }
+
+    append_legal_evasion(board, moves, Move(from, target, B_QUEEN), color);
+    append_legal_evasion(board, moves, Move(from, target, B_ROOK), color);
+    append_legal_evasion(board, moves, Move(from, target, B_BISHOP), color);
+    append_legal_evasion(board, moves, Move(from, target, B_KNIGHT), color);
+}
+
 void append_pawn_evasions_to_target(const ChessBoard& board,
-                                    std::vector<Move>& moves,
+                                    MoveList& moves,
                                     int target,
                                     Color color) {
     const Piece own_pawn = color == WHITE ? W_PAWN : B_PAWN;
@@ -145,12 +197,7 @@ void append_pawn_evasions_to_target(const ChessBoard& board,
         Bitboard pawns = pawn_attacks(target_bit, opposite_color(color)) &
                          board.piece_bitboard(own_pawn);
         while (pawns != 0) {
-            const int from = pop_lsb(pawns);
-            std::vector<Move> pawn_moves;
-            add_pawn_move(pawn_moves, from, target, color);
-            for (const Move& move : pawn_moves) {
-                append_legal_evasion(board, moves, move, color);
-            }
+            append_legal_pawn_evasion(board, moves, pop_lsb(pawns), target, color);
         }
         return;
     }
@@ -158,11 +205,7 @@ void append_pawn_evasions_to_target(const ChessBoard& board,
     if (color == WHITE) {
         const int one_step_from = target - 8;
         if (one_step_from >= 0 && board.has_piece(one_step_from, own_pawn)) {
-            std::vector<Move> pawn_moves;
-            add_pawn_move(pawn_moves, one_step_from, target, color);
-            for (const Move& move : pawn_moves) {
-                append_legal_evasion(board, moves, move, color);
-            }
+            append_legal_pawn_evasion(board, moves, one_step_from, target, color);
         }
 
         const int two_step_from = target - 16;
@@ -177,11 +220,7 @@ void append_pawn_evasions_to_target(const ChessBoard& board,
 
     const int one_step_from = target + 8;
     if (one_step_from < 64 && board.has_piece(one_step_from, own_pawn)) {
-        std::vector<Move> pawn_moves;
-        add_pawn_move(pawn_moves, one_step_from, target, color);
-        for (const Move& move : pawn_moves) {
-            append_legal_evasion(board, moves, move, color);
-        }
+        append_legal_pawn_evasion(board, moves, one_step_from, target, color);
     }
 
     const int two_step_from = target + 16;
@@ -194,7 +233,7 @@ void append_pawn_evasions_to_target(const ChessBoard& board,
 }
 
 void append_en_passant_evasions(const ChessBoard& board,
-                                std::vector<Move>& moves,
+                                MoveList& moves,
                                 Bitboard evasion_targets,
                                 int checker_square,
                                 Color color) {
@@ -221,7 +260,7 @@ void append_en_passant_evasions(const ChessBoard& board,
 }
 
 void append_piece_evasions(const ChessBoard& board,
-                           std::vector<Move>& moves,
+                           MoveList& moves,
                            Piece piece,
                            Bitboard evasion_targets,
                            Color color) {
@@ -336,6 +375,7 @@ PinInfo compute_pin_info(const ChessBoard& board, Color color, int king_square) 
     return info;
 }
 
+#ifndef NDEBUG
 std::vector<Move> generate_moves_by_filtering(const ChessBoard& board, Color color) {
     const std::vector<Move> pseudo_moves = board.generate_pseudo_moves(color);
     std::vector<Move> legal_moves;
@@ -351,7 +391,32 @@ std::vector<Move> generate_moves_by_filtering(const ChessBoard& board, Color col
     return legal_moves;
 }
 
-#ifndef NDEBUG
+std::vector<Move> generate_quiescence_moves_by_filtering(const ChessBoard& board,
+                                                         Color color,
+                                                         bool include_quiet_checks) {
+    const std::vector<Move> pseudo_moves = board.generate_pseudo_moves(color);
+    std::vector<Move> legal_moves;
+    legal_moves.reserve(pseudo_moves.size());
+
+    for (const Move& move : pseudo_moves) {
+        const bool is_tactical = is_tactical_quiescence_candidate(board, move);
+        if (!is_tactical && !include_quiet_checks) {
+            continue;
+        }
+
+        const ChessBoard next = board.make_move(move);
+        if (next.is_in_check(color)) {
+            continue;
+        }
+
+        if (is_tactical || next.is_in_check(next.turn)) {
+            legal_moves.push_back(move);
+        }
+    }
+
+    return legal_moves;
+}
+
 int move_key(const Move& move) {
     return move.from * 64 * 16 + move.to * 16 + static_cast<int>(move.promotion);
 }
@@ -374,25 +439,50 @@ bool same_move_set(std::vector<Move> lhs, std::vector<Move> rhs) {
 }
 #endif
 
-std::vector<Move> ChessBoard::generate_pseudo_moves(Color color) const {
-    std::vector<Move> moves;
-    moves.reserve(64);
+void remove_piece_from_temp(PieceBitboards& piece_bitboards,
+                            Bitboard& occupied,
+                            Piece piece,
+                            int square) {
+    if (piece == EMPTY || square < 0) {
+        return;
+    }
 
-    const Bitboard own_occupied = color_bitboard(color);
-    const Bitboard enemy_occupied = color_bitboard(opposite_color(color));
+    const Bitboard bit = square_bb(square);
+    piece_bitboards[static_cast<std::size_t>(piece)] &= ~bit;
+    occupied &= ~bit;
+}
 
-    Bitboard pawns = piece_bitboard(color == WHITE ? W_PAWN : B_PAWN);
+void add_piece_to_temp(PieceBitboards& piece_bitboards,
+                       Bitboard& occupied,
+                       Piece piece,
+                       int square) {
+    if (piece == EMPTY || square < 0) {
+        return;
+    }
+
+    const Bitboard bit = square_bb(square);
+    piece_bitboards[static_cast<std::size_t>(piece)] |= bit;
+    occupied |= bit;
+}
+
+void generate_pseudo_moves_into(const ChessBoard& board, Color color, MoveList& moves) {
+    moves.clear();
+
+    const Bitboard own_occupied = board.color_bitboard(color);
+    const Bitboard enemy_occupied = board.color_bitboard(opposite_color(color));
+
+    Bitboard pawns = board.piece_bitboard(color == WHITE ? W_PAWN : B_PAWN);
     while (pawns != 0) {
         const int from = pop_lsb(pawns);
         const Bitboard from_bit = square_bb(from);
 
         if (color == WHITE) {
             const int one_step = from + 8;
-            if (one_step < 64 && (occupied & square_bb(one_step)) == 0) {
+            if (one_step < 64 && (board.occupied & square_bb(one_step)) == 0) {
                 add_pawn_move(moves, from, one_step, color);
                 if ((from_bit & kRank2Mask) != 0) {
                     const int two_step = from + 16;
-                    if ((occupied & square_bb(two_step)) == 0) {
+                    if ((board.occupied & square_bb(two_step)) == 0) {
                         moves.emplace_back(from, two_step);
                     }
                 }
@@ -400,18 +490,18 @@ std::vector<Move> ChessBoard::generate_pseudo_moves(Color color) const {
 
             const Bitboard capture_targets =
                 pawn_attacks(from_bit, WHITE) & (enemy_occupied |
-                (en_passant_square >= 0 ? square_bb(en_passant_square) : 0ULL));
+                (board.en_passant_square >= 0 ? square_bb(board.en_passant_square) : 0ULL));
             Bitboard captures = capture_targets;
             while (captures != 0) {
                 add_pawn_move(moves, from, pop_lsb(captures), color);
             }
         } else {
             const int one_step = from - 8;
-            if (one_step >= 0 && (occupied & square_bb(one_step)) == 0) {
+            if (one_step >= 0 && (board.occupied & square_bb(one_step)) == 0) {
                 add_pawn_move(moves, from, one_step, color);
                 if ((from_bit & kRank7Mask) != 0) {
                     const int two_step = from - 16;
-                    if ((occupied & square_bb(two_step)) == 0) {
+                    if ((board.occupied & square_bb(two_step)) == 0) {
                         moves.emplace_back(from, two_step);
                     }
                 }
@@ -419,7 +509,7 @@ std::vector<Move> ChessBoard::generate_pseudo_moves(Color color) const {
 
             const Bitboard capture_targets =
                 pawn_attacks(from_bit, BLACK) & (enemy_occupied |
-                (en_passant_square >= 0 ? square_bb(en_passant_square) : 0ULL));
+                (board.en_passant_square >= 0 ? square_bb(board.en_passant_square) : 0ULL));
             Bitboard captures = capture_targets;
             while (captures != 0) {
                 add_pawn_move(moves, from, pop_lsb(captures), color);
@@ -427,104 +517,109 @@ std::vector<Move> ChessBoard::generate_pseudo_moves(Color color) const {
         }
     }
 
-    Bitboard knights = piece_bitboard(color == WHITE ? W_KNIGHT : B_KNIGHT);
+    Bitboard knights = board.piece_bitboard(color == WHITE ? W_KNIGHT : B_KNIGHT);
     while (knights != 0) {
         const int from = pop_lsb(knights);
         append_targets(moves, from, knight_attacks(from) & ~own_occupied);
     }
 
-    Bitboard bishops = piece_bitboard(color == WHITE ? W_BISHOP : B_BISHOP);
+    Bitboard bishops = board.piece_bitboard(color == WHITE ? W_BISHOP : B_BISHOP);
     while (bishops != 0) {
         const int from = pop_lsb(bishops);
-        append_targets(moves, from, bishop_attacks(from, occupied) & ~own_occupied);
+        append_targets(moves, from, bishop_attacks(from, board.occupied) & ~own_occupied);
     }
 
-    Bitboard rooks = piece_bitboard(color == WHITE ? W_ROOK : B_ROOK);
+    Bitboard rooks = board.piece_bitboard(color == WHITE ? W_ROOK : B_ROOK);
     while (rooks != 0) {
         const int from = pop_lsb(rooks);
-        append_targets(moves, from, rook_attacks(from, occupied) & ~own_occupied);
+        append_targets(moves, from, rook_attacks(from, board.occupied) & ~own_occupied);
     }
 
-    Bitboard queens = piece_bitboard(color == WHITE ? W_QUEEN : B_QUEEN);
+    Bitboard queens = board.piece_bitboard(color == WHITE ? W_QUEEN : B_QUEEN);
     while (queens != 0) {
         const int from = pop_lsb(queens);
-        append_targets(moves, from, queen_attacks(from, occupied) & ~own_occupied);
+        append_targets(moves, from, queen_attacks(from, board.occupied) & ~own_occupied);
     }
 
     const Piece king_piece = color == WHITE ? W_KING : B_KING;
-    const Bitboard king_bb = piece_bitboard(king_piece);
+    const Bitboard king_bb = board.piece_bitboard(king_piece);
     if (king_bb != 0) {
         const int from = __builtin_ctzll(king_bb);
         append_targets(moves, from, king_attacks(from) & ~own_occupied);
 
         if (color == WHITE && from == 4) {
-            if (white_can_castle_kingside &&
-                has_piece(7, W_ROOK) &&
-                (occupied & kWhiteCastleKingsideEmpty) == 0 &&
-                !is_square_attacked(4, BLACK) &&
-                !is_square_attacked(5, BLACK) &&
-                !is_square_attacked(6, BLACK)) {
+            if (board.white_can_castle_kingside &&
+                board.has_piece(7, W_ROOK) &&
+                (board.occupied & kWhiteCastleKingsideEmpty) == 0 &&
+                !board.is_square_attacked(4, BLACK) &&
+                !board.is_square_attacked(5, BLACK) &&
+                !board.is_square_attacked(6, BLACK)) {
                 moves.emplace_back(4, 6);
             }
-            if (white_can_castle_queenside &&
-                has_piece(0, W_ROOK) &&
-                (occupied & kWhiteCastleQueensideEmpty) == 0 &&
-                !is_square_attacked(4, BLACK) &&
-                !is_square_attacked(3, BLACK) &&
-                !is_square_attacked(2, BLACK)) {
+            if (board.white_can_castle_queenside &&
+                board.has_piece(0, W_ROOK) &&
+                (board.occupied & kWhiteCastleQueensideEmpty) == 0 &&
+                !board.is_square_attacked(4, BLACK) &&
+                !board.is_square_attacked(3, BLACK) &&
+                !board.is_square_attacked(2, BLACK)) {
                 moves.emplace_back(4, 2);
             }
         }
 
         if (color == BLACK && from == 60) {
-            if (black_can_castle_kingside &&
-                has_piece(63, B_ROOK) &&
-                (occupied & kBlackCastleKingsideEmpty) == 0 &&
-                !is_square_attacked(60, WHITE) &&
-                !is_square_attacked(61, WHITE) &&
-                !is_square_attacked(62, WHITE)) {
+            if (board.black_can_castle_kingside &&
+                board.has_piece(63, B_ROOK) &&
+                (board.occupied & kBlackCastleKingsideEmpty) == 0 &&
+                !board.is_square_attacked(60, WHITE) &&
+                !board.is_square_attacked(61, WHITE) &&
+                !board.is_square_attacked(62, WHITE)) {
                 moves.emplace_back(60, 62);
             }
-            if (black_can_castle_queenside &&
-                has_piece(56, B_ROOK) &&
-                (occupied & kBlackCastleQueensideEmpty) == 0 &&
-                !is_square_attacked(60, WHITE) &&
-                !is_square_attacked(59, WHITE) &&
-                !is_square_attacked(58, WHITE)) {
+            if (board.black_can_castle_queenside &&
+                board.has_piece(56, B_ROOK) &&
+                (board.occupied & kBlackCastleQueensideEmpty) == 0 &&
+                !board.is_square_attacked(60, WHITE) &&
+                !board.is_square_attacked(59, WHITE) &&
+                !board.is_square_attacked(58, WHITE)) {
                 moves.emplace_back(60, 58);
             }
         }
     }
-
-    return moves;
 }
 
-std::vector<Move> ChessBoard::generate_moves(Color color) const {
-    const int king_square = find_king_square(*this, color);
+std::vector<Move> ChessBoard::generate_pseudo_moves(Color color) const {
+    MoveList moves;
+    generate_pseudo_moves_into(*this, color, moves);
+    return moves.to_vector();
+}
+
+void generate_moves_into(const ChessBoard& board, Color color, MoveList& moves) {
+    moves.clear();
+
+    const int king_square = find_king_square(board, color);
     if (king_square == -1) {
-        return {};
+        return;
     }
 
-    if (attackers_to_square(*this, king_square, opposite_color(color), occupied) != 0) {
-        std::vector<Move> evasions = generate_evasions(color);
+    if (attackers_to_square(board, king_square, opposite_color(color), board.occupied) != 0) {
+        generate_evasions_into(board, color, moves);
 #ifndef NDEBUG
-        const std::vector<Move> slow_moves = generate_moves_by_filtering(*this, color);
-        assert(same_move_set(evasions, slow_moves));
+        const std::vector<Move> slow_moves = generate_moves_by_filtering(board, color);
+        assert(same_move_set(moves.to_vector(), slow_moves));
 #endif
-        return evasions;
+        return;
     }
 
-    const std::vector<Move> pseudo_moves = generate_pseudo_moves(color);
-    std::vector<Move> legal_moves;
-    legal_moves.reserve(pseudo_moves.size());
-    const PinInfo pin_info = compute_pin_info(*this, color, king_square);
+    MoveList pseudo_moves;
+    generate_pseudo_moves_into(board, color, pseudo_moves);
+    const PinInfo pin_info = compute_pin_info(board, color, king_square);
 
     for (const Move& move : pseudo_moves) {
-        const Piece moving_piece = piece_at(move.from);
-        if (is_king(moving_piece) || is_en_passant_move(*this, move, moving_piece)) {
-            const ChessBoard next = make_move(move);
+        const Piece moving_piece = board.piece_at(move.from);
+        if (is_king(moving_piece) || is_en_passant_move(board, move, moving_piece)) {
+            const ChessBoard next = board.make_move(move);
             if (!next.is_in_check(color)) {
-                legal_moves.push_back(move);
+                moves.push_back(move);
             }
             continue;
         }
@@ -532,48 +627,114 @@ std::vector<Move> ChessBoard::generate_moves(Color color) const {
         const Bitboard from_bit = square_bb(move.from);
         if ((pin_info.pinned & from_bit) == 0 ||
             (pin_info.legal_rays[static_cast<std::size_t>(move.from)] & square_bb(move.to)) != 0) {
-            legal_moves.push_back(move);
+            moves.push_back(move);
         }
     }
 
 #ifndef NDEBUG
-    const std::vector<Move> slow_moves = generate_moves_by_filtering(*this, color);
-    assert(same_move_set(legal_moves, slow_moves));
+    const std::vector<Move> slow_moves = generate_moves_by_filtering(board, color);
+    assert(same_move_set(moves.to_vector(), slow_moves));
 #endif
-    return legal_moves;
 }
 
-std::vector<Move> ChessBoard::generate_evasions(Color color) const {
-    const int king_square = find_king_square(*this, color);
+std::vector<Move> ChessBoard::generate_moves(Color color) const {
+    MoveList moves;
+    generate_moves_into(*this, color, moves);
+    return moves.to_vector();
+}
+
+bool is_checking_move_fast(const ChessBoard& board, const Move& move) {
+    const Piece moving_piece = board.piece_at(move.from);
+    if (moving_piece == EMPTY) {
+        return false;
+    }
+
+    const Piece placed_piece = move.promotion != EMPTY ? move.promotion : moving_piece;
+    const Color moving_color = is_white_piece(moving_piece) ? WHITE : BLACK;
+    const Color enemy_color = opposite_color(moving_color);
+    const int enemy_king_square = find_king_square(board, enemy_color);
+    if (enemy_king_square == -1) {
+        return false;
+    }
+
+    const bool is_pawn = moving_piece == W_PAWN || moving_piece == B_PAWN;
+    const bool is_king = moving_piece == W_KING || moving_piece == B_KING;
+    const bool is_en_passant_capture =
+        is_pawn && move.to == board.en_passant_square && board.is_empty(move.to);
+    const Piece destination_piece = is_en_passant_capture ? EMPTY : board.piece_at(move.to);
+    const Piece captured_piece = is_en_passant_capture
+        ? (moving_color == WHITE ? B_PAWN : W_PAWN)
+        : destination_piece;
+    const int captured_square = is_en_passant_capture
+        ? move.to - (moving_color == WHITE ? 8 : -8)
+        : (captured_piece != EMPTY ? move.to : -1);
+    const bool is_castle = is_king && abs_int(move.to - move.from) == 2;
+
+    PieceBitboards piece_bitboards = board.piece_bitboards;
+    Bitboard occupied = board.occupied;
+    remove_piece_from_temp(piece_bitboards, occupied, moving_piece, move.from);
+    remove_piece_from_temp(piece_bitboards, occupied, captured_piece, captured_square);
+    add_piece_to_temp(piece_bitboards, occupied, placed_piece, move.to);
+
+    if (is_castle) {
+        if (move.to == 6) {
+            remove_piece_from_temp(piece_bitboards, occupied, W_ROOK, 7);
+            add_piece_to_temp(piece_bitboards, occupied, W_ROOK, 5);
+        } else if (move.to == 2) {
+            remove_piece_from_temp(piece_bitboards, occupied, W_ROOK, 0);
+            add_piece_to_temp(piece_bitboards, occupied, W_ROOK, 3);
+        } else if (move.to == 62) {
+            remove_piece_from_temp(piece_bitboards, occupied, B_ROOK, 63);
+            add_piece_to_temp(piece_bitboards, occupied, B_ROOK, 61);
+        } else if (move.to == 58) {
+            remove_piece_from_temp(piece_bitboards, occupied, B_ROOK, 56);
+            add_piece_to_temp(piece_bitboards, occupied, B_ROOK, 59);
+        }
+    }
+
+    const bool result =
+        attackers_to_square(piece_bitboards, enemy_king_square, moving_color, occupied) != 0;
+
+#ifndef NDEBUG
+    const ChessBoard next = board.make_move(move);
+    const bool slow_result = next.is_in_check(next.turn);
+    assert(result == slow_result);
+#endif
+
+    return result;
+}
+
+void generate_evasions_into(const ChessBoard& board, Color color, MoveList& moves) {
+    moves.clear();
+
+    const int king_square = find_king_square(board, color);
     if (king_square == -1) {
-        return {};
+        return;
     }
 
     const Color enemy_color = opposite_color(color);
-    const Bitboard own_occupied = color_bitboard(color);
+    const Bitboard own_occupied = board.color_bitboard(color);
     const Bitboard checkers =
-        attackers_to_square(*this, king_square, enemy_color, occupied);
+        attackers_to_square(board, king_square, enemy_color, board.occupied);
     if (checkers == 0) {
-        return generate_moves(color);
+        generate_moves_into(board, color, moves);
+        return;
     }
-
-    std::vector<Move> moves;
-    moves.reserve(16);
 
     Bitboard king_targets = king_attacks(king_square) & ~own_occupied;
     while (king_targets != 0) {
-        append_legal_evasion(*this,
+        append_legal_evasion(board,
                              moves,
                              Move(king_square, pop_lsb(king_targets)),
                              color);
     }
 
     if ((checkers & (checkers - 1)) != 0) {
-        return moves;
+        return;
     }
 
     const int checker_square = __builtin_ctzll(checkers);
-    const Piece checker = piece_at(checker_square);
+    const Piece checker = board.piece_at(checker_square);
     Bitboard evasion_targets = square_bb(checker_square);
     if (is_slider(checker)) {
         evasion_targets |= squares_between(king_square, checker_square);
@@ -581,48 +742,240 @@ std::vector<Move> ChessBoard::generate_evasions(Color color) const {
 
     Bitboard remaining_targets = evasion_targets;
     while (remaining_targets != 0) {
-        append_pawn_evasions_to_target(*this, moves, pop_lsb(remaining_targets), color);
+        append_pawn_evasions_to_target(board, moves, pop_lsb(remaining_targets), color);
     }
-    append_en_passant_evasions(*this, moves, evasion_targets, checker_square, color);
+    append_en_passant_evasions(board, moves, evasion_targets, checker_square, color);
 
     if (color == WHITE) {
-        append_piece_evasions(*this, moves, W_KNIGHT, evasion_targets, color);
-        append_piece_evasions(*this, moves, W_BISHOP, evasion_targets, color);
-        append_piece_evasions(*this, moves, W_ROOK, evasion_targets, color);
-        append_piece_evasions(*this, moves, W_QUEEN, evasion_targets, color);
+        append_piece_evasions(board, moves, W_KNIGHT, evasion_targets, color);
+        append_piece_evasions(board, moves, W_BISHOP, evasion_targets, color);
+        append_piece_evasions(board, moves, W_ROOK, evasion_targets, color);
+        append_piece_evasions(board, moves, W_QUEEN, evasion_targets, color);
     } else {
-        append_piece_evasions(*this, moves, B_KNIGHT, evasion_targets, color);
-        append_piece_evasions(*this, moves, B_BISHOP, evasion_targets, color);
-        append_piece_evasions(*this, moves, B_ROOK, evasion_targets, color);
-        append_piece_evasions(*this, moves, B_QUEEN, evasion_targets, color);
+        append_piece_evasions(board, moves, B_KNIGHT, evasion_targets, color);
+        append_piece_evasions(board, moves, B_BISHOP, evasion_targets, color);
+        append_piece_evasions(board, moves, B_ROOK, evasion_targets, color);
+        append_piece_evasions(board, moves, B_QUEEN, evasion_targets, color);
+    }
+}
+
+std::vector<Move> ChessBoard::generate_evasions(Color color) const {
+    MoveList moves;
+    generate_evasions_into(*this, color, moves);
+    return moves.to_vector();
+}
+
+void generate_quiescence_moves_into(const ChessBoard& board,
+                                    Color color,
+                                    bool include_quiet_checks,
+                                    MoveList& legal_moves) {
+    legal_moves.clear();
+
+    const int king_square = find_king_square(board, color);
+    if (king_square == -1) {
+        return;
     }
 
-    return moves;
+    const PinInfo pin_info = compute_pin_info(board, color, king_square);
+    const Bitboard own_occupied = board.color_bitboard(color);
+    const Bitboard enemy_occupied = board.color_bitboard(opposite_color(color));
+
+    const auto consider_move = [&](const Move& move, bool is_tactical) {
+        if (!is_tactical && !include_quiet_checks) {
+            return;
+        }
+
+        const Piece moving_piece = board.piece_at(move.from);
+        const bool requires_full_legality_check =
+            is_king(moving_piece) || is_en_passant_move(board, move, moving_piece);
+        if (requires_full_legality_check) {
+            const ChessBoard next = board.make_move(move);
+            if (next.is_in_check(color)) {
+                return;
+            }
+
+            if (is_tactical || next.is_in_check(next.turn)) {
+                legal_moves.push_back(move);
+            }
+            return;
+        }
+
+        const Bitboard from_bit = square_bb(move.from);
+        if ((pin_info.pinned & from_bit) != 0 &&
+            (pin_info.legal_rays[static_cast<std::size_t>(move.from)] & square_bb(move.to)) == 0) {
+            return;
+        }
+
+        if (is_tactical || is_checking_move_fast(board, move)) {
+            legal_moves.push_back(move);
+        }
+    };
+
+    const auto consider_pawn_move_to = [&](int from, int to, Color move_color, bool is_tactical) {
+        const int promotion_row = (move_color == WHITE) ? 7 : 0;
+        if (row_of(to) == promotion_row) {
+            if (move_color == WHITE) {
+                consider_move(Move(from, to, W_QUEEN), true);
+                consider_move(Move(from, to, W_ROOK), true);
+                consider_move(Move(from, to, W_BISHOP), true);
+                consider_move(Move(from, to, W_KNIGHT), true);
+            } else {
+                consider_move(Move(from, to, B_QUEEN), true);
+                consider_move(Move(from, to, B_ROOK), true);
+                consider_move(Move(from, to, B_BISHOP), true);
+                consider_move(Move(from, to, B_KNIGHT), true);
+            }
+            return;
+        }
+
+        consider_move(Move(from, to), is_tactical);
+    };
+
+    Bitboard pawns = board.piece_bitboard(color == WHITE ? W_PAWN : B_PAWN);
+    while (pawns != 0) {
+        const int from = pop_lsb(pawns);
+        const Bitboard from_bit = square_bb(from);
+        const Bitboard ep_target =
+            board.en_passant_square >= 0 ? square_bb(board.en_passant_square) : 0ULL;
+
+        if (color == WHITE) {
+            const int one_step = from + 8;
+            if (one_step < 64 && (board.occupied & square_bb(one_step)) == 0) {
+                const bool promotes = row_of(one_step) == 7;
+                if (promotes || include_quiet_checks) {
+                    consider_pawn_move_to(from, one_step, color, promotes);
+                }
+                if (!promotes && include_quiet_checks && (from_bit & kRank2Mask) != 0) {
+                    const int two_step = from + 16;
+                    if ((board.occupied & square_bb(two_step)) == 0) {
+                        consider_move(Move(from, two_step), false);
+                    }
+                }
+            }
+
+            Bitboard captures = pawn_attacks(from_bit, WHITE) & (enemy_occupied | ep_target);
+            while (captures != 0) {
+                consider_pawn_move_to(from, pop_lsb(captures), color, true);
+            }
+        } else {
+            const int one_step = from - 8;
+            if (one_step >= 0 && (board.occupied & square_bb(one_step)) == 0) {
+                const bool promotes = row_of(one_step) == 0;
+                if (promotes || include_quiet_checks) {
+                    consider_pawn_move_to(from, one_step, color, promotes);
+                }
+                if (!promotes && include_quiet_checks && (from_bit & kRank7Mask) != 0) {
+                    const int two_step = from - 16;
+                    if ((board.occupied & square_bb(two_step)) == 0) {
+                        consider_move(Move(from, two_step), false);
+                    }
+                }
+            }
+
+            Bitboard captures = pawn_attacks(from_bit, BLACK) & (enemy_occupied | ep_target);
+            while (captures != 0) {
+                consider_pawn_move_to(from, pop_lsb(captures), color, true);
+            }
+        }
+    }
+
+    const auto consider_targets = [&](int from, Bitboard targets) {
+        Bitboard captures = targets & enemy_occupied;
+        while (captures != 0) {
+            consider_move(Move(from, pop_lsb(captures)), true);
+        }
+
+        if (!include_quiet_checks) {
+            return;
+        }
+
+        Bitboard quiets = targets & ~board.occupied;
+        while (quiets != 0) {
+            consider_move(Move(from, pop_lsb(quiets)), false);
+        }
+    };
+
+    Bitboard knights = board.piece_bitboard(color == WHITE ? W_KNIGHT : B_KNIGHT);
+    while (knights != 0) {
+        const int from = pop_lsb(knights);
+        consider_targets(from, knight_attacks(from) & ~own_occupied);
+    }
+
+    Bitboard bishops = board.piece_bitboard(color == WHITE ? W_BISHOP : B_BISHOP);
+    while (bishops != 0) {
+        const int from = pop_lsb(bishops);
+        consider_targets(from, bishop_attacks(from, board.occupied) & ~own_occupied);
+    }
+
+    Bitboard rooks = board.piece_bitboard(color == WHITE ? W_ROOK : B_ROOK);
+    while (rooks != 0) {
+        const int from = pop_lsb(rooks);
+        consider_targets(from, rook_attacks(from, board.occupied) & ~own_occupied);
+    }
+
+    Bitboard queens = board.piece_bitboard(color == WHITE ? W_QUEEN : B_QUEEN);
+    while (queens != 0) {
+        const int from = pop_lsb(queens);
+        consider_targets(from, queen_attacks(from, board.occupied) & ~own_occupied);
+    }
+
+    const Piece king_piece = color == WHITE ? W_KING : B_KING;
+    const Bitboard king_bb = board.piece_bitboard(king_piece);
+    if (king_bb != 0) {
+        const int from = __builtin_ctzll(king_bb);
+        consider_targets(from, king_attacks(from) & ~own_occupied);
+
+        if (include_quiet_checks && color == WHITE && from == 4) {
+            if (board.white_can_castle_kingside &&
+                board.has_piece(7, W_ROOK) &&
+                (board.occupied & kWhiteCastleKingsideEmpty) == 0 &&
+                !board.is_square_attacked(4, BLACK) &&
+                !board.is_square_attacked(5, BLACK) &&
+                !board.is_square_attacked(6, BLACK)) {
+                consider_move(Move(4, 6), false);
+            }
+            if (board.white_can_castle_queenside &&
+                board.has_piece(0, W_ROOK) &&
+                (board.occupied & kWhiteCastleQueensideEmpty) == 0 &&
+                !board.is_square_attacked(4, BLACK) &&
+                !board.is_square_attacked(3, BLACK) &&
+                !board.is_square_attacked(2, BLACK)) {
+                consider_move(Move(4, 2), false);
+            }
+        }
+
+        if (include_quiet_checks && color == BLACK && from == 60) {
+            if (board.black_can_castle_kingside &&
+                board.has_piece(63, B_ROOK) &&
+                (board.occupied & kBlackCastleKingsideEmpty) == 0 &&
+                !board.is_square_attacked(60, WHITE) &&
+                !board.is_square_attacked(61, WHITE) &&
+                !board.is_square_attacked(62, WHITE)) {
+                consider_move(Move(60, 62), false);
+            }
+            if (board.black_can_castle_queenside &&
+                board.has_piece(56, B_ROOK) &&
+                (board.occupied & kBlackCastleQueensideEmpty) == 0 &&
+                !board.is_square_attacked(60, WHITE) &&
+                !board.is_square_attacked(59, WHITE) &&
+                !board.is_square_attacked(58, WHITE)) {
+                consider_move(Move(60, 58), false);
+            }
+        }
+    }
+
+#ifndef NDEBUG
+    const std::vector<Move> slow_moves =
+        generate_quiescence_moves_by_filtering(board, color, include_quiet_checks);
+    assert(same_move_set(legal_moves.to_vector(), slow_moves));
+#endif
 }
 
 std::vector<Move> ChessBoard::generate_quiescence_moves(Color color,
                                                         bool include_quiet_checks) const {
-    const std::vector<Move> pseudo_moves = generate_pseudo_moves(color);
-    std::vector<Move> legal_moves;
-    legal_moves.reserve(pseudo_moves.size());
-
-    for (const Move& move : pseudo_moves) {
-        const bool is_tactical = is_tactical_quiescence_candidate(*this, move);
-        if (!is_tactical && !include_quiet_checks) {
-            continue;
-        }
-
-        const ChessBoard next = make_move(move);
-        if (next.is_in_check(color)) {
-            continue;
-        }
-
-        if (is_tactical || next.is_in_check(next.turn)) {
-            legal_moves.push_back(move);
-        }
-    }
-
-    return legal_moves;
+    MoveList moves;
+    generate_quiescence_moves_into(*this, color, include_quiet_checks, moves);
+    return moves.to_vector();
 }
 
 ChessBoard ChessBoard::make_move(const Move& move) const {
@@ -734,7 +1087,7 @@ ChessBoard ChessBoard::make_move(const Move& move) const {
         ++next.turn_number;
     }
 
-    next.turn = enemy_color;
+    next.set_turn(enemy_color);
     xor_castling_rights(next.zobrist_key, next);
     xor_en_passant_file(next.zobrist_key, next);
     next.zobrist_key ^= zobrist_side_to_move_key();

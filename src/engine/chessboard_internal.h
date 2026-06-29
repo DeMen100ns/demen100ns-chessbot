@@ -3,6 +3,9 @@
 #include "chess/attacks.h"
 #include "chess/chessboard.h"
 
+#include <array>
+#include <cassert>
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -57,6 +60,49 @@ inline int pop_lsb(Bitboard& bitboard) {
     return square;
 }
 
+struct MoveList {
+    static constexpr std::size_t kCapacity = 256;
+
+    std::array<Move, kCapacity> moves;
+    std::size_t count = 0;
+
+    void clear() { count = 0; }
+    void truncate(std::size_t new_count) {
+        assert(new_count <= count);
+        count = new_count;
+    }
+    bool empty() const { return count == 0; }
+    std::size_t size() const { return count; }
+
+    Move* begin() { return moves.data(); }
+    Move* end() { return moves.data() + count; }
+    const Move* begin() const { return moves.data(); }
+    const Move* end() const { return moves.data() + count; }
+
+    Move& operator[](std::size_t index) {
+        assert(index < count);
+        return moves[index];
+    }
+
+    const Move& operator[](std::size_t index) const {
+        assert(index < count);
+        return moves[index];
+    }
+
+    void push_back(const Move& move) {
+        assert(count < kCapacity);
+        moves[count++] = move;
+    }
+
+    void emplace_back(int from, int to, Piece promotion = EMPTY) {
+        push_back(Move(from, to, promotion));
+    }
+
+    std::vector<Move> to_vector() const {
+        return std::vector<Move>(begin(), end());
+    }
+};
+
 std::uint64_t splitmix64(std::uint64_t value);
 std::uint64_t piece_square_key(Piece piece, int square);
 std::uint64_t zobrist_side_to_move_key();
@@ -66,7 +112,12 @@ std::uint64_t compute_position_key_full(const ChessBoard& board);
 Piece piece_from_fen_char(char symbol);
 int square_from_algebraic(const std::string& square);
 int find_king_square(const ChessBoard& board, Color color);
+bool is_checking_move_fast(const ChessBoard& board, const Move& move);
 bool has_en_passant_capture(const ChessBoard& board_state);
-void add_promotion_moves(std::vector<Move>& moves, int from, int to, Color color);
-void add_pawn_move(std::vector<Move>& moves, int from, int to, Color color);
-void append_targets(std::vector<Move>& moves, int from, Bitboard targets);
+void generate_pseudo_moves_into(const ChessBoard& board, Color color, MoveList& moves);
+void generate_moves_into(const ChessBoard& board, Color color, MoveList& moves);
+void generate_evasions_into(const ChessBoard& board, Color color, MoveList& moves);
+void generate_quiescence_moves_into(const ChessBoard& board,
+                                    Color color,
+                                    bool include_quiet_checks,
+                                    MoveList& moves);

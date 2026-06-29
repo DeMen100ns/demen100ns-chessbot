@@ -1,6 +1,6 @@
 #include "bench/uci_engine.h"
 
-#include "bench/chess_io.h"
+#include "chess/io.h"
 
 #include <array>
 #include <cerrno>

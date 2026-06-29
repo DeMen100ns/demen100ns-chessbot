@@ -1,0 +1,7 @@
+{
+  "name": "Stockfish",
+  "protocol": "chess-bench-v1",
+  "entry": "./run.sh",
+  "args": [],
+  "cwd": "."
+}

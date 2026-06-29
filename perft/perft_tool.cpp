@@ -1,4 +1,5 @@
-#include "chessboard.h"
+#include "chess/chessboard.h"
+#include "chess/io.h"
 
 #include <algorithm>
 #include <chrono>
@@ -20,29 +21,6 @@ struct Options {
     std::string fen = kStartPositionFen;
     bool divide = false;
 };
-
-std::string move_to_uci(const Move& move) {
-    std::string uci = "a1a1";
-    uci[0] = static_cast<char>('a' + (move.from % 8));
-    uci[1] = static_cast<char>('1' + (move.from / 8));
-    uci[2] = static_cast<char>('a' + (move.to % 8));
-    uci[3] = static_cast<char>('1' + (move.to / 8));
-    if (move.promotion != EMPTY) {
-        switch (move.promotion) {
-            case W_QUEEN:
-            case B_QUEEN: uci.push_back('q'); break;
-            case W_ROOK:
-            case B_ROOK: uci.push_back('r'); break;
-            case W_BISHOP:
-            case B_BISHOP: uci.push_back('b'); break;
-            case W_KNIGHT:
-            case B_KNIGHT: uci.push_back('n'); break;
-            case EMPTY: break;
-            default: break;
-        }
-    }
-    return uci;
-}
 
 std::uint64_t perft(const ChessBoard& board, int depth) {
     if (depth == 0) {
@@ -131,7 +109,7 @@ int main(int argc, char* argv[]) {
             for (const Move& move : moves) {
                 const std::uint64_t move_nodes =
                     perft(board.make_move(move), options->depth - 1);
-                breakdown.emplace_back(move_to_uci(move), move_nodes);
+                breakdown.emplace_back(ChessIO::move_to_uci(move), move_nodes);
                 nodes += move_nodes;
             }
 

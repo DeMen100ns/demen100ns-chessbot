@@ -21,6 +21,8 @@ struct ChessBoard {
     bool black_can_castle_kingside;
     bool black_can_castle_queenside;
     int en_passant_square;
+    mutable std::array<float, 128> nnue_accumulator;
+    mutable bool nnue_accumulator_valid;
 
     ChessBoard()
         : square_piece{},
@@ -35,7 +37,9 @@ struct ChessBoard {
           white_can_castle_queenside(false),
           black_can_castle_kingside(false),
           black_can_castle_queenside(false),
-          en_passant_square(-1) {}
+          en_passant_square(-1),
+          nnue_accumulator{},
+          nnue_accumulator_valid(false) {}
 
     explicit ChessBoard(const std::string& fen);
 
@@ -53,6 +57,7 @@ struct ChessBoard {
     bool is_stalemate(Color color) const;
     int count_pieces() const;
     std::uint64_t position_key() const;
+    void set_turn(Color color);
     Piece piece_at(int square) const {
         return square_piece[static_cast<std::size_t>(square)];
     }

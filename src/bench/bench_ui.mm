@@ -2,7 +2,7 @@
 
 #include "bench/bench_app.h"
 #include "bench/bot_process.h"
-#include "bench/chess_io.h"
+#include "chess/io.h"
 
 #include <algorithm>
 #include <cctype>

@@ -1,4 +1,4 @@
-#include "minimax.h"
+#include "chess/minimax.h"
 
 #include <cassert>
 
@@ -7,7 +7,7 @@ int main() {
     board.initialize();
 
     Minimax ai(2);
-    const Move move = ai.find_best_move(board);
+    const Move move = ai.find_best_move(board, ai.depth, 0);
 
     assert(move.from >= 0);
     assert(move.to >= 0);

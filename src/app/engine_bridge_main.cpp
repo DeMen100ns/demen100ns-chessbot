@@ -1,5 +1,6 @@
-#include "bot.h"
-#include "minimax.h"
+#include "chess/bot.h"
+#include "chess/io.h"
+#include "chess/minimax.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -14,48 +15,12 @@ namespace {
 struct SearchResult {
     std::string best_move_uci;
     int static_eval = 0;
+    int search_eval = 0;
     int current_repetition = 0;
     int completed_depth = 0;
     std::size_t history_positions = 0;
     std::string debug_info;
 };
-
-std::string move_to_uci(const Move& move) {
-    if (move.from < 0 || move.from >= 64 || move.to < 0 || move.to >= 64) {
-        throw std::invalid_argument("Move is out of bounds");
-    }
-
-    std::string text = "a1a1";
-    text[0] = static_cast<char>('a' + (move.from % 8));
-    text[1] = static_cast<char>('1' + (move.from / 8));
-    text[2] = static_cast<char>('a' + (move.to % 8));
-    text[3] = static_cast<char>('1' + (move.to / 8));
-
-    switch (move.promotion) {
-        case W_QUEEN:
-        case B_QUEEN:
-            text.push_back('q');
-            break;
-        case W_ROOK:
-        case B_ROOK:
-            text.push_back('r');
-            break;
-        case W_BISHOP:
-        case B_BISHOP:
-            text.push_back('b');
-            break;
-        case W_KNIGHT:
-        case B_KNIGHT:
-            text.push_back('n');
-            break;
-        case EMPTY:
-            break;
-        default:
-            throw std::invalid_argument("Unsupported promotion piece");
-    }
-
-    return text;
-}
 
 void print_usage() {
     std::cerr << "Usage: chess_engine_bridge [--serve] --fen \"<FEN>\" [--depth N] "
@@ -72,6 +37,17 @@ std::vector<std::string> split_tab_fields(const std::string& line) {
     return fields;
 }
 
+int repetition_count_in_history(const std::vector<std::uint64_t>& history,
+                                std::uint64_t key) {
+    int count = 0;
+    for (std::uint64_t history_key : history) {
+        if (history_key == key) {
+            ++count;
+        }
+    }
+    return count;
+}
+
 SearchResult run_search(Bot& ai,
                         const std::string& fen,
                         int depth,
@@ -83,7 +59,6 @@ SearchResult run_search(Bot& ai,
         throw std::runtime_error("Position has no legal moves");
     }
 
-    ai.depth = depth;
     ai.position_history.clear();
     for (const std::string& history_fen : history_fens) {
         ai.record_position(ChessBoard(history_fen));
@@ -91,13 +66,13 @@ SearchResult run_search(Bot& ai,
 
     Minimax evaluator(depth);
     const std::uint64_t current_key = board.position_key();
-    const int current_repetition =
-        ai.position_history.count(current_key) ? ai.position_history[current_key] : 0;
-    const Move best_move = ai.choose_move_timed(board, time_limit_ms);
+    const int current_repetition = repetition_count_in_history(ai.position_history, current_key);
+    const Move best_move = ai.choose_move(board, depth, time_limit_ms);
 
     SearchResult result;
-    result.best_move_uci = move_to_uci(best_move);
+    result.best_move_uci = ChessIO::move_to_uci(best_move);
     result.static_eval = evaluator.evaluate(board);
+    result.search_eval = ai.get_last_search_eval();
     result.current_repetition = current_repetition;
     result.completed_depth = ai.get_last_search_completed_depth();
     result.history_positions = history_fens.size();
@@ -165,6 +140,7 @@ int serve_loop() {
             std::cout << "info"
                       << "\ttime_limit_ms=" << time_limit_ms
                       << "\tstatic_eval=" << result.static_eval
+                      << "\tsearch_eval=" << result.search_eval
                       << "\thistory_positions=" << result.history_positions
                       << "\tcurrent_repetition=" << result.current_repetition
                       << "\tcompleted_depth=" << result.completed_depth
@@ -185,7 +161,7 @@ int serve_loop() {
 int main(int argc, char* argv[]) {
     try {
         std::string fen;
-        int depth = 3;
+        int depth = 64;
         int time_limit_ms = 1000;
         std::vector<std::string> history_fens;
         bool serve_mode = false;
@@ -224,6 +200,7 @@ int main(int argc, char* argv[]) {
         std::cerr << "bridge info: depth_arg=" << depth
                   << " time_limit_ms=" << time_limit_ms
                   << " static_eval=" << result.static_eval
+                  << " search_eval=" << result.search_eval
                   << " history_positions=" << result.history_positions
                   << " current_repetition=" << result.current_repetition
                   << " completed_depth=" << result.completed_depth

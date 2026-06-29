@@ -1,79 +1,13 @@
-#include "chessboard.h"
+#include "chess/chessboard.h"
+#include "chess/io.h"
 
 #include <algorithm>
 #include <array>
 #include <cassert>
 #include <cstdint>
-#include <sstream>
 #include <vector>
 
 namespace {
-char piece_to_fen(Piece piece) {
-    switch (piece) {
-        case W_PAWN: return 'P';
-        case W_KNIGHT: return 'N';
-        case W_BISHOP: return 'B';
-        case W_ROOK: return 'R';
-        case W_QUEEN: return 'Q';
-        case W_KING: return 'K';
-        case B_PAWN: return 'p';
-        case B_KNIGHT: return 'n';
-        case B_BISHOP: return 'b';
-        case B_ROOK: return 'r';
-        case B_QUEEN: return 'q';
-        case B_KING: return 'k';
-        case EMPTY: break;
-    }
-    return '1';
-}
-
-std::string board_to_fen(const ChessBoard& board) {
-    std::ostringstream fen;
-
-    for (int rank = 7; rank >= 0; --rank) {
-        int empty_count = 0;
-        for (int file = 0; file < 8; ++file) {
-            const Piece piece = board.piece_at(rank * 8 + file);
-            if (piece == EMPTY) {
-                ++empty_count;
-                continue;
-            }
-
-            if (empty_count > 0) {
-                fen << empty_count;
-                empty_count = 0;
-            }
-            fen << piece_to_fen(piece);
-        }
-
-        if (empty_count > 0) {
-            fen << empty_count;
-        }
-        if (rank > 0) {
-            fen << '/';
-        }
-    }
-
-    fen << ' ' << (board.turn == WHITE ? 'w' : 'b') << ' ';
-
-    std::string castling;
-    if (board.white_can_castle_kingside) castling.push_back('K');
-    if (board.white_can_castle_queenside) castling.push_back('Q');
-    if (board.black_can_castle_kingside) castling.push_back('k');
-    if (board.black_can_castle_queenside) castling.push_back('q');
-    fen << (castling.empty() ? "-" : castling) << ' ';
-
-    if (board.en_passant_square >= 0 && board.en_passant_square < 64) {
-        fen << static_cast<char>('a' + (board.en_passant_square % 8))
-            << static_cast<char>('1' + (board.en_passant_square / 8));
-    } else {
-        fen << '-';
-    }
-
-    fen << ' ' << board.halfmove_clock << ' ' << board.turn_number;
-    return fen.str();
-}
-
 std::uint64_t square_bit(int square) {
     return 1ULL << square;
 }
@@ -117,7 +51,7 @@ void assert_bitboard_invariants(const ChessBoard& board) {
     assert(board.piece_bitboards == expected_piece_bitboards);
     assert(board.color_bitboards == expected_color_bitboards);
     assert(board.occupied == expected_occupied);
-    assert(board.position_key() == ChessBoard(board_to_fen(board)).position_key());
+    assert(board.position_key() == ChessBoard(ChessIO::board_to_fen(board)).position_key());
 }
 
 void assert_evasions_match_legal_moves(const char* fen) {

@@ -1,6 +1,12 @@
 #include "minimax_internal.h"
 
+#include "chess/nnue_basic_weights.h"
+
 #include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
 
 namespace {
 
@@ -41,6 +47,7 @@ constexpr int kRookSemiOpenFileBonusMg = 10;
 constexpr int kRookSemiOpenFileBonusEg = 8;
 constexpr int kRookOpenFileBonusMg = 18;
 constexpr int kRookOpenFileBonusEg = 14;
+constexpr std::size_t kMaxPawnEvalCacheEntries = 65536;
 
 constexpr int kMgPesto[6][64] = {
     {
@@ -339,10 +346,17 @@ bool is_backward_pawn(const ChessBoard& board,
     return is_square_attacked_by_pawn(board, forward_square, color == WHITE ? BLACK : WHITE);
 }
 
+std::uint64_t pawn_structure_cache_key(const ChessBoard& board) {
+    std::uint64_t key = splitmix64(board.piece_bitboard(W_PAWN));
+    key ^= splitmix64(board.piece_bitboard(B_PAWN) ^ 0x9e3779b97f4a7c15ULL);
+    key ^= splitmix64(board.occupied ^ 0xbf58476d1ce4e5b9ULL);
+    return key;
+}
+
 EvalTerm pawn_structure_score(const ChessBoard& board, Color color) {
     std::array<int, 8> pawn_counts{};
-    std::vector<int> pawn_squares;
-    pawn_squares.reserve(8);
+    std::array<int, 8> pawn_squares{};
+    std::size_t pawn_count = 0;
 
     Bitboard pawns = board.piece_bitboard(color == WHITE ? W_PAWN : B_PAWN);
     for (int file = 0; file < 8; ++file) {
@@ -351,7 +365,7 @@ EvalTerm pawn_structure_score(const ChessBoard& board, Color color) {
     }
     Bitboard remaining_pawns = pawns;
     while (remaining_pawns != 0) {
-        pawn_squares.push_back(pop_lsb(remaining_pawns));
+        pawn_squares[pawn_count++] = pop_lsb(remaining_pawns);
     }
 
     EvalTerm score;
@@ -380,7 +394,8 @@ EvalTerm pawn_structure_score(const ChessBoard& board, Color color) {
         score.eg -= extra_islands * kPawnIslandPenaltyEg;
     }
 
-    for (int square : pawn_squares) {
+    for (std::size_t index = 0; index < pawn_count; ++index) {
+        const int square = pawn_squares[index];
         const int file = col_of(square);
 
         if (!has_adjacent_file_pawn(pawn_counts, file)) {
@@ -578,4 +593,65 @@ int Minimax::evaluate(const ChessBoard& board) {
     const int eg_phase = 24 - mg_phase;
 
     return (mg_score * mg_phase + eg_score * eg_phase) / 24;
+}
+
+int Minimax::evaluate_nnue(const ChessBoard& board) {
+    static_assert(ChessNnueWeights::kHiddenSize == 128,
+                  "ChessBoard NNUE accumulator storage must match NNUE hidden size");
+    constexpr int kPieceFeatureCount = 2 * 6 * 64;
+    constexpr int kWhiteToMoveFeatureIndex = kPieceFeatureCount;
+    constexpr int kBlackToMoveFeatureIndex = kPieceFeatureCount + 1;
+
+    if (!board.nnue_accumulator_valid) {
+        for (int index = 0; index < ChessNnueWeights::kHiddenSize; ++index) {
+            board.nnue_accumulator[static_cast<std::size_t>(index)] =
+                ChessNnueWeights::kFc1Bias[index];
+        }
+
+        for (int piece = W_PAWN; piece <= B_KING; ++piece) {
+            Bitboard pieces = board.piece_bitboard(static_cast<Piece>(piece));
+            while (pieces != 0) {
+                const int square = pop_lsb(pieces);
+                const Piece current_piece = static_cast<Piece>(piece);
+                const int type = piece_type_index(current_piece);
+                const Color color = piece_color(current_piece);
+                const int feature_index =
+                    static_cast<int>(color) * 6 * 64 + type * 64 + square;
+                const float* feature_weights =
+                    ChessNnueWeights::kFc1WeightByFeature[feature_index];
+
+                for (int hidden_index = 0;
+                     hidden_index < ChessNnueWeights::kHiddenSize;
+                     ++hidden_index) {
+                    board.nnue_accumulator[static_cast<std::size_t>(hidden_index)] +=
+                        feature_weights[hidden_index];
+                }
+            }
+        }
+
+        const int side_to_move_feature =
+            board.turn == WHITE ? kWhiteToMoveFeatureIndex : kBlackToMoveFeatureIndex;
+        if (side_to_move_feature < ChessNnueWeights::kInputFeatures) {
+            const float* feature_weights =
+                ChessNnueWeights::kFc1WeightByFeature[side_to_move_feature];
+            for (int hidden_index = 0;
+                 hidden_index < ChessNnueWeights::kHiddenSize;
+                 ++hidden_index) {
+                board.nnue_accumulator[static_cast<std::size_t>(hidden_index)] +=
+                    feature_weights[hidden_index];
+            }
+        }
+
+        board.nnue_accumulator_valid = true;
+    }
+
+    float white_score = ChessNnueWeights::kFc2Bias;
+    for (int hidden_index = 0; hidden_index < ChessNnueWeights::kHiddenSize; ++hidden_index) {
+        const float activated =
+            std::max(0.0F, board.nnue_accumulator[static_cast<std::size_t>(hidden_index)]);
+        white_score += activated * ChessNnueWeights::kFc2Weight[hidden_index];
+    }
+
+    const int rounded_white_score = static_cast<int>(std::lround(white_score));
+    return board.turn == WHITE ? rounded_white_score : -rounded_white_score;
 }

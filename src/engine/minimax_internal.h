@@ -52,20 +52,20 @@ bool is_en_passant_move(const ChessBoard& board, const Move& move);
 int static_exchange_eval(const ChessBoard& board, const Move& move);
 bool is_checking_move(const ChessBoard& board, const Move& move);
 bool same_move(const Move& lhs, const Move& rhs);
-bool is_tactical_move(const ChessBoard& board, const Move& move);
 
-void order_moves(const ChessBoard& board, std::vector<Move>& moves);
+void order_moves(const ChessBoard& board, MoveList& moves);
 void order_moves(const ChessBoard& board,
-                 std::vector<Move>& moves,
+                 MoveList& moves,
                  const KillerSlot& killer_slot,
                  const HistoryForSide& history_for_side);
 void order_moves(const ChessBoard& board,
-                 std::vector<Move>& moves,
+                 MoveList& moves,
                  const std::optional<Move>& tt_move);
 void order_moves(const ChessBoard& board,
-                 std::vector<Move>& moves,
+                 MoveList& moves,
                  const std::optional<Move>& tt_move,
                  const KillerSlot& killer_slot,
-                 const HistoryForSide& history_for_side);
+                 const HistoryForSide& history_for_side,
+                 const std::optional<Move>& counter_move);
 
 }  // namespace MinimaxInternal

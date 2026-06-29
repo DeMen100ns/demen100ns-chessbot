@@ -1,6 +1,6 @@
 #include "bench/bot_process.h"
 
-#include "bench/chess_io.h"
+#include "chess/io.h"
 
 #include <array>
 #include <cerrno>
@@ -8,8 +8,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <spawn.h>
 #include <string>
+#include <spawn.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>

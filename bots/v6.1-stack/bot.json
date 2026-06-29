@@ -1,0 +1,7 @@
+{
+  "name": "V6.1 Stack",
+  "protocol": "chess-bench-v1",
+  "entry": "./run.sh",
+  "args": [],
+  "cwd": "."
+}
