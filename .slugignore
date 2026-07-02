@@ -10,5 +10,3 @@ nnue/runs/
 nnue/data_*
 nnue/splits.zip
 nnue/splits/
-tests/
-perft/
