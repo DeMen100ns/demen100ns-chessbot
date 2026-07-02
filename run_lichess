@@ -1,10 +1,14 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LICHESS_DIR="$ROOT_DIR/integrations/lichess-bot"
 
 cd "$LICHESS_DIR"
+
+if [[ ! -f "config.yml" ]]; then
+    cp "config.yml.project.example" "config.yml"
+fi
 
 if [[ -f ".venv/bin/activate" ]]; then
     source ".venv/bin/activate"

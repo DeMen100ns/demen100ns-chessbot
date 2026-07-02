@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cmake --preset release
+cmake --build --preset release --target chess_engine_bridge --parallel "${WEB_CONCURRENCY:-2}"

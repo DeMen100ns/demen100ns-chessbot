@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(chess_bot LANGUAGES CXX OBJCXX)
+project(chess_bot LANGUAGES CXX)
 
 if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
@@ -59,6 +59,8 @@ add_executable(prepare_bench_dataset
 target_link_libraries(prepare_bench_dataset PRIVATE chess_bench_support)
 
 if(APPLE)
+    enable_language(OBJCXX)
+
     add_executable(chess_app MACOSX_BUNDLE
         src/app/gui_main.mm
         src/ui/gui_ui.mm
