@@ -7,7 +7,17 @@ LICHESS_DIR="$ROOT_DIR/integrations/lichess-bot"
 cd "$LICHESS_DIR"
 
 if [[ ! -f "config.yml" ]]; then
-    cp "config.yml.project.example" "config.yml"
+    if [[ -n "${LICHESS_BOT_CONFIG_B64:-}" ]]; then
+        python3 - <<'PY'
+import base64
+import os
+from pathlib import Path
+
+Path("config.yml").write_bytes(base64.b64decode(os.environ["LICHESS_BOT_CONFIG_B64"]))
+PY
+    else
+        cp "config.yml.project.example" "config.yml"
+    fi
 fi
 
 if [[ -f ".venv/bin/activate" ]]; then
