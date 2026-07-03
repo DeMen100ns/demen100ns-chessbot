@@ -22,10 +22,11 @@ struct Minimax {
     int depth;
     int last_completed_depth = 0;
     int last_search_eval = 0;
+    static constexpr std::size_t kTranspositionTableSize = 1u << 20;
 
-    explicit Minimax(int d = 3)
+    explicit Minimax(int d = 3, std::size_t transposition_entries = kTranspositionTableSize)
         : depth(d),
-          transposition_table(kTranspositionTableSize) {}
+          transposition_table(transposition_entries) {}
 
     int evaluate(const ChessBoard& board);
     int evaluate_nnue(const ChessBoard& board);
@@ -42,7 +43,6 @@ private:
     using Clock = std::chrono::steady_clock;
     static constexpr int kMaxKillerPlies = 128;
     static constexpr int kBoardSquareCount = 64;
-    static constexpr std::size_t kTranspositionTableSize = 1u << 20;
     enum class TTFlag {
         Exact,
         LowerBound,

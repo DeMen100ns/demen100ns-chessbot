@@ -4,6 +4,7 @@
 #include "chess/minimax.h"
 #include "chess/online_tablebase.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -18,7 +19,9 @@ struct Bot {
     mutable std::string last_move_debug;
     mutable Minimax searcher;
 
-    explicit Bot(int search_depth = 3) : depth(search_depth), searcher(search_depth) {}
+    explicit Bot(int search_depth = 3,
+                 std::size_t transposition_entries = Minimax::kTranspositionTableSize)
+        : depth(search_depth), searcher(search_depth, transposition_entries) {}
 
     Move choose_move(const ChessBoard& board, int max_depth, int time_limit_ms) const;
     bool enable_online_tablebase(const std::string& base_url, int timeout_ms = 200);

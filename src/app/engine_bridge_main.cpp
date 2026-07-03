@@ -48,6 +48,16 @@ int repetition_count_in_history(const std::vector<std::uint64_t>& history,
     return count;
 }
 
+std::size_t bridge_transposition_entries() {
+    const char* bits_env = std::getenv("CHESS_TT_BITS");
+    if (bits_env == nullptr || bits_env[0] == '\0') {
+        return Minimax::kTranspositionTableSize;
+    }
+
+    const int bits = std::clamp(std::atoi(bits_env), 0, 20);
+    return std::size_t{1} << bits;
+}
+
 SearchResult run_search(Bot& ai,
                         const std::string& fen,
                         int depth,
@@ -64,7 +74,7 @@ SearchResult run_search(Bot& ai,
         ai.record_position(ChessBoard(history_fen));
     }
 
-    Minimax evaluator(depth);
+    Minimax evaluator(depth, 0);
     const std::uint64_t current_key = board.position_key();
     const int current_repetition = repetition_count_in_history(ai.position_history, current_key);
     const Move best_move = ai.choose_move(board, depth, time_limit_ms);
@@ -101,7 +111,7 @@ void configure_bridge_tablebase(Bot& ai) {
 }
 
 int serve_loop() {
-    Bot ai(64);
+    Bot ai(64, bridge_transposition_entries());
     configure_bridge_tablebase(ai);
 
     std::string line;
@@ -193,7 +203,7 @@ int main(int argc, char* argv[]) {
             return 2;
         }
 
-        Bot ai(64);
+        Bot ai(64, bridge_transposition_entries());
         configure_bridge_tablebase(ai);
         const SearchResult result = run_search(ai, fen, depth, time_limit_ms, history_fens);
 
