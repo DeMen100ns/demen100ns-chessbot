@@ -1,12 +1,14 @@
 # V7
 
-Frozen snapshot of the local C++ engine with the handcrafted evaluator as the default search path and NNUE kept available separately.
+Frozen snapshot of the local C++ engine as deployed to Heroku (`main` at `b1c6b89`),
+rebuilt after removing unused evaluator code:
 
-- `Minimax::evaluate()` uses the pre-NNUE handcrafted evaluator
-- `Minimax::evaluate_nnue()` runs the NNUE-backed evaluator
-- NNUE architecture: `2 x 6 x 64 -> 128 -> 1`
-- weights are embedded in `include/chess/nnue_basic_weights.h`
-- output score convention remains side-to-move
+- handcrafted `Minimax::evaluate()` (the same evaluator as v1–v6.1)
+- adaptive time management: soft/hard limits, more time when the best move or eval is unstable
+- pondering on the opponent's time
+- draw detection inside the search (50-move rule, insufficient material)
+- same best moves as v6.1-stack at depths 4-6 on the 40 benchmark positions; 1.50x faster
+  to depth 4, about equal (1.02x) at depth 6 (`benchmarks/versions/REPORT.md`)
 
 Run with the local bench protocol:
 

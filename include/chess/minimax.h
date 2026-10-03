@@ -37,7 +37,6 @@ struct Minimax {
           transposition_table(transposition_entries) {}
 
     int evaluate(const ChessBoard& board);
-    int evaluate_nnue(const ChessBoard& board);
     Move find_best_move(const ChessBoard& board,
                         int max_depth,
                         int time_limit_ms,

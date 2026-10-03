@@ -30,3 +30,6 @@ __pycache__/
 *.log
 lichess_bot_auto_logs/
 src/bench/result.txt
+
+# Over GitHub's 100 MiB limit; generated NNUE training data kept locally only
+archive/nnue/data_1M_static.json

@@ -112,16 +112,6 @@ add_executable(bench_time
 )
 target_link_libraries(bench_time PRIVATE chess_engine)
 
-add_executable(nnue_evaluate_fens
-    nnue/evaluate_fens.cpp
-)
-target_link_libraries(nnue_evaluate_fens PRIVATE chess_engine)
-
-add_executable(nnue_annotate_static_eval
-    nnue/annotate_static_eval.cpp
-)
-target_link_libraries(nnue_annotate_static_eval PRIVATE chess_engine)
-
 add_executable(perft_tool
     perft/perft_tool.cpp
 )

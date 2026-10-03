@@ -1,5 +1,5 @@
 {
-  "name": "V7 NNUE",
+  "name": "V7.2 NNUE (archived, NNUE 770)",
   "protocol": "chess-bench-v1",
   "entry": "./run.sh",
   "args": [],
