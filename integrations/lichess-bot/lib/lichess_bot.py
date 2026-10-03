@@ -717,14 +717,15 @@ def play_game(li: lichess.Lichess,
                     if u_type == "chatLine":
                         conversation.react(ChatLine(upd))
                     elif u_type == "gameState":
+                        setup_timer = Timer()
                         game.state = upd
                         board = setup_board(game)
+                        engine.on_game_state(board, not is_game_over(game))
                         takeback_field = game.state.get("btakeback") if game.is_white else game.state.get("wtakeback")
 
                         if not is_game_over(game) and is_engine_move(game, prior_game, board):
                             disconnect_time = correspondence_disconnect_time
                             say_hello(conversation, hello, hello_spectators, board)
-                            setup_timer = Timer()
                             print_move_number(board)
                             move_attempted = True
                             engine.play_move(board,

@@ -1,0 +1,25 @@
+{
+  "time_control": "10+0.1 seconds",
+  "games": 4,
+  "completed_draws": 2,
+  "unfinished_at_160_plies": 2,
+  "timeouts": 0,
+  "legal_moves_checked": 527,
+  "old": {
+    "moves": 263,
+    "average_elapsed_ms": 246.77,
+    "max_hard_overrun_ms": 26.762,
+    "p95_hard_overrun_ms": 1.563,
+    "stop_reasons": {}
+  },
+  "new": {
+    "moves": 264,
+    "average_elapsed_ms": 244.126,
+    "max_hard_overrun_ms": 18.515,
+    "p95_hard_overrun_ms": 0.226,
+    "stop_reasons": {
+      "soft_limit": 244,
+      "hard_limit": 20
+    }
+  }
+}

@@ -3,11 +3,30 @@
 #include "chess/nnue_basic_weights.h"
 #include "chessboard_internal.h"
 
+#ifndef CHESS_NNUE_DUAL_PERSPECTIVE
+#define CHESS_NNUE_DUAL_PERSPECTIVE 0
+#endif
+
+#if CHESS_NNUE_DUAL_PERSPECTIVE
+static_assert(ChessNnueWeights::kOutputHiddenSize <=
+                  static_cast<int>(ChessBoard::kNnueMaxHiddenSize),
+              "ChessBoard NNUE accumulator storage must fit NNUE output hidden size");
+#else
+static_assert(ChessNnueWeights::kHiddenSize <=
+                  static_cast<int>(ChessBoard::kNnueMaxHiddenSize),
+              "ChessBoard NNUE accumulator storage must fit NNUE hidden size");
+#endif
+
 namespace {
 
 constexpr int kPieceFeatureCount = 2 * 6 * 64;
+constexpr int kHalfKaFeatureCount = 64 * 64 * 11;
 constexpr int kWhiteToMoveFeatureIndex = kPieceFeatureCount;
 constexpr int kBlackToMoveFeatureIndex = kPieceFeatureCount + 1;
+
+bool uses_halfka_features() {
+    return ChessNnueWeights::kInputFeatures == kHalfKaFeatureCount;
+}
 
 int nnue_piece_type(Piece piece) {
     switch (piece) {
@@ -36,7 +55,7 @@ int nnue_piece_type(Piece piece) {
     return -1;
 }
 
-int nnue_feature_index(Piece piece, int square) {
+int nnue_base_feature_index(Piece piece, int square) {
     const Color color = is_white_piece(piece) ? WHITE : BLACK;
     return static_cast<int>(color) * 6 * 64 + nnue_piece_type(piece) * 64 + square;
 }
@@ -46,7 +65,18 @@ void update_nnue_accumulator_feature(ChessBoard& board, Piece piece, int square,
         return;
     }
 
-    const int feature_index = nnue_feature_index(piece, square);
+#if CHESS_NNUE_DUAL_PERSPECTIVE
+    board.nnue_accumulator_valid = false;
+    (void)square;
+    (void)scale;
+    return;
+#else
+    if (uses_halfka_features()) {
+        board.nnue_accumulator_valid = false;
+        return;
+    }
+
+    const int feature_index = nnue_base_feature_index(piece, square);
     if (feature_index >= ChessNnueWeights::kInputFeatures) {
         return;
     }
@@ -57,10 +87,22 @@ void update_nnue_accumulator_feature(ChessBoard& board, Piece piece, int square,
         board.nnue_accumulator[static_cast<std::size_t>(hidden_index)] +=
             scale * feature_weights[hidden_index];
     }
+#endif
 }
 
 void update_nnue_accumulator_turn_feature(ChessBoard& board, Color color, float scale) {
     if (!board.nnue_accumulator_valid) {
+        return;
+    }
+
+#if CHESS_NNUE_DUAL_PERSPECTIVE
+    board.nnue_accumulator_valid = false;
+    (void)color;
+    (void)scale;
+    return;
+#else
+    if (uses_halfka_features()) {
+        board.nnue_accumulator_valid = false;
         return;
     }
 
@@ -75,6 +117,7 @@ void update_nnue_accumulator_turn_feature(ChessBoard& board, Color color, float 
         board.nnue_accumulator[static_cast<std::size_t>(hidden_index)] +=
             scale * feature_weights[hidden_index];
     }
+#endif
 }
 
 }  // namespace

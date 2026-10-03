@@ -20,6 +20,8 @@ struct Options {
     int depth = 8;
     int limit = 0;
     int progress_every = 100;
+    int type = 1;
+    int score_clip = 2000;
 };
 
 std::string json_escape(const std::string& text) {
@@ -84,7 +86,8 @@ bool parse_int_arg(const char* text, int& value) {
 void print_usage() {
     std::cerr << "Usage: evaluate_fens [--input nnue/data_fen_1M] "
                  "[--output nnue/data_1M.json] [--depth 8] "
-                 "[--limit N] [--progress-every N]\n";
+                 "[--limit N] [--progress-every N] [--type 1|2] "
+                 "[--score-clip 2000]\n";
 }
 
 bool parse_args(int argc, char* argv[], Options& options) {
@@ -106,12 +109,42 @@ bool parse_args(int argc, char* argv[], Options& options) {
             if (!parse_int_arg(argv[++i], options.progress_every)) {
                 return false;
             }
+        } else if (arg == "--type" && i + 1 < argc) {
+            if (!parse_int_arg(argv[++i], options.type) ||
+                (options.type != 1 && options.type != 2)) {
+                return false;
+            }
+        } else if (arg == "--score-clip" && i + 1 < argc) {
+            if (!parse_int_arg(argv[++i], options.score_clip) ||
+                options.score_clip <= 0) {
+                return false;
+            }
         } else {
             return false;
         }
     }
 
     return !options.input.empty() && !options.output.empty() && options.depth > 0;
+}
+
+bool will_clip_score(long long score, int score_clip) {
+    return score < -static_cast<long long>(score_clip) ||
+           score > static_cast<long long>(score_clip);
+}
+
+int clip_score_for_training(long long score, int score_clip) {
+    if (score < -static_cast<long long>(score_clip)) {
+        return -score_clip;
+    }
+    if (score > static_cast<long long>(score_clip)) {
+        return score_clip;
+    }
+    return static_cast<int>(score);
+}
+
+int static_eval_for_white(Minimax& engine, const ChessBoard& board) {
+    const int side_to_move_score = engine.evaluate(board);
+    return board.turn == WHITE ? side_to_move_score : -side_to_move_score;
 }
 
 int evaluate_for_white(Minimax& engine, const ChessBoard& board, int depth) {
@@ -143,11 +176,17 @@ int main(int argc, char* argv[]) {
 
         Minimax engine(options.depth);
         std::uint64_t count = 0;
+        std::uint64_t clipped_count = 0;
         std::string line;
         const auto start = std::chrono::steady_clock::now();
 
         output << "{\n";
         output << "  \"depth\": " << options.depth << ",\n";
+        output << "  \"type\": " << options.type << ",\n";
+        output << "  \"label\": \""
+               << (options.type == 1 ? "depth_eval" : "depth_eval_minus_static_eval")
+               << "\",\n";
+        output << "  \"score_clip\": " << options.score_clip << ",\n";
         output << "  \"score_perspective\": \"white\",\n";
         output << "  \"positions\": [\n";
 
@@ -161,7 +200,14 @@ int main(int argc, char* argv[]) {
             }
 
             const ChessBoard board(fen);
-            const int eval_score = evaluate_for_white(engine, board, options.depth);
+            const int depth_eval = evaluate_for_white(engine, board, options.depth);
+            const long long raw_eval_score = options.type == 1
+                ? static_cast<long long>(depth_eval)
+                : static_cast<long long>(depth_eval) - static_eval_for_white(engine, board);
+            if (will_clip_score(raw_eval_score, options.score_clip)) {
+                ++clipped_count;
+            }
+            const int eval_score = clip_score_for_training(raw_eval_score, options.score_clip);
 
             if (count > 0) {
                 output << ",\n";
@@ -194,6 +240,8 @@ int main(int argc, char* argv[]) {
 
         fs::rename(tmp_output, options.output);
         std::cerr << "done evaluated=" << count
+                  << " clipped=" << clipped_count
+                  << " score_clip=" << options.score_clip
                   << " output=" << options.output.string() << '\n';
     } catch (const std::exception& ex) {
         std::cerr << "evaluate_fens error: " << ex.what() << '\n';

@@ -11,7 +11,7 @@ engine:
   dir: "../.."
   name: "CppBridge"
   protocol: "homemade"
-  ponder: false
+  ponder: true
   working_dir: "../.."
   homemade_options: {}
 

@@ -25,5 +25,5 @@ struct OnlineTablebase {
     mutable std::unordered_map<std::string, std::optional<Move>> move_cache;
 
     bool configure(const std::string& url, int request_timeout_ms);
-    std::optional<Move> choose_move(const ChessBoard& board) const;
+    std::optional<Move> choose_move(const ChessBoard& board, bool cache_only = false) const;
 };

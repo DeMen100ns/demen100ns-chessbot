@@ -24,6 +24,7 @@ struct Bot {
         : depth(search_depth), searcher(search_depth, transposition_entries) {}
 
     Move choose_move(const ChessBoard& board, int max_depth, int time_limit_ms) const;
+    Move choose_move(const ChessBoard& board, int max_depth, const SearchLimits& limits) const;
     bool enable_online_tablebase(const std::string& base_url, int timeout_ms = 200);
     void disable_online_tablebase();
     int get_last_search_completed_depth() const;

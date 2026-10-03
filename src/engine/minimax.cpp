@@ -3,6 +3,7 @@
 #include "minimax_internal.h"
 
 #include <algorithm>
+#include <utility>
 
 using namespace MinimaxInternal;
 
@@ -26,6 +27,50 @@ int repetition_count_for_current_path(const ChessBoard& board,
     }
 
     return count;
+}
+
+bool has_insufficient_material(const ChessBoard& board) {
+    if (board.piece_bitboard(W_PAWN) != 0 ||
+        board.piece_bitboard(B_PAWN) != 0 ||
+        board.piece_bitboard(W_ROOK) != 0 ||
+        board.piece_bitboard(B_ROOK) != 0 ||
+        board.piece_bitboard(W_QUEEN) != 0 ||
+        board.piece_bitboard(B_QUEEN) != 0) {
+        return false;
+    }
+
+    const Bitboard white_bishops = board.piece_bitboard(W_BISHOP);
+    const Bitboard black_bishops = board.piece_bitboard(B_BISHOP);
+    const Bitboard white_knights = board.piece_bitboard(W_KNIGHT);
+    const Bitboard black_knights = board.piece_bitboard(B_KNIGHT);
+    const int bishop_count = __builtin_popcountll(white_bishops | black_bishops);
+    const int knight_count = __builtin_popcountll(white_knights | black_knights);
+    const int minor_count = bishop_count + knight_count;
+
+    if (minor_count <= 1) {
+        return true;
+    }
+
+    const bool exactly_one_bishop_each =
+        bishop_count == 2 &&
+        knight_count == 0 &&
+        __builtin_popcountll(white_bishops) == 1 &&
+        __builtin_popcountll(black_bishops) == 1;
+    if (!exactly_one_bishop_each) {
+        return false;
+    }
+
+    const int white_bishop_square = __builtin_ctzll(white_bishops);
+    const int black_bishop_square = __builtin_ctzll(black_bishops);
+    const int white_bishop_color =
+        (row_of(white_bishop_square) + col_of(white_bishop_square)) & 1;
+    const int black_bishop_color =
+        (row_of(black_bishop_square) + col_of(black_bishop_square)) & 1;
+    return white_bishop_color == black_bishop_color;
+}
+
+bool is_draw_by_rule(const ChessBoard& board) {
+    return board.halfmove_clock >= 100 || has_insufficient_material(board);
 }
 
 bool is_pawn_move(const ChessBoard& board, const Move& move) {
@@ -191,11 +236,36 @@ void Minimax::reset_node_stats() {
 }
 
 bool Minimax::is_time_up() {
-    if (!use_time_limit || stop_search) {
-        return stop_search;
+    if (stop_search) {
+        return true;
+    }
+    SearchControl* control = active_limits.control;
+    if (control && control->stop.load(std::memory_order_relaxed)) {
+        last_stop_reason = "stopped";
+        return stop_search = true;
+    }
+    if (control && active_limits.pondering && control->hit_ready.load(std::memory_order_acquire)) {
+        last_ponder_ms = std::max(0.0, std::chrono::duration<double, std::milli>(
+            control->hit_limits.start - active_limits.start).count());
+        last_ponder_depth = last_completed_depth;
+        last_ponder_hit = true;
+        active_limits = control->hit_limits;
+        active_limits.control = control;
+        active_limits.pondering = false;
+        use_time_limit = active_limits.timed();
+        deadline = active_limits.start + std::chrono::milliseconds(active_limits.hard_ms);
+        if (active_limits.managed()) {
+            last_target_ms = std::min(double(active_limits.hard_ms), active_limits.soft_ms * time_factor);
+            ponder_credit_ms = std::min(last_ponder_ms, last_target_ms);
+            if (last_completed_depth > 0 && ponder_credit_ms >= last_target_ms) {
+                last_stop_reason = "ponder_ready";
+                return stop_search = true;
+            }
+        }
     }
 
-    if (Clock::now() >= deadline) {
+    if (use_time_limit && Clock::now() >= deadline) {
+        last_stop_reason = active_limits.pondering ? "ponder_limit" : "hard_limit";
         stop_search = true;
     }
 
@@ -213,7 +283,8 @@ int Minimax::quiescence(const ChessBoard& board,
                         std::vector<std::uint64_t>& repetition_history) {
     ++current_node_stats.qnodes;
 
-    if (repetition_count_for_current_path(board, repetition_history) >= 3) {
+    if (is_draw_by_rule(board) ||
+        repetition_count_for_current_path(board, repetition_history) >= 3) {
         ++current_node_stats.qleaves;
         return 0;
     }
@@ -332,7 +403,8 @@ int Minimax::negamax(const ChessBoard& board,
                      const std::optional<Move>& previous_move) {
     ++current_node_stats.nodes;
 
-    if (repetition_count_for_current_path(board, repetition_history) >= 3) {
+    if (is_draw_by_rule(board) ||
+        repetition_count_for_current_path(board, repetition_history) >= 3) {
         return 0;
     }
 
@@ -501,7 +573,13 @@ Move Minimax::search_root(const ChessBoard& board,
     depth = search_depth;
     MoveList moves;
     generate_moves_into(board, board.turn, moves);
+    if (is_draw_by_rule(board)) {
+        search_eval = 0;
+        completed = true;
+        return moves.empty() ? Move(-1, -1) : moves[0];
+    }
     if (moves.empty()) {
+        search_eval = board.is_in_check(board.turn) ? -mate_score(0) : 0;
         completed = true;
         return Move(-1, -1);
     }
@@ -565,21 +643,66 @@ Move Minimax::find_best_move(const ChessBoard& board,
                              int max_depth,
                              int time_limit_ms,
                              std::vector<std::uint64_t> repetition_history) {
+    return find_best_move(board, max_depth, SearchLimits::fixed(time_limit_ms),
+                          std::move(repetition_history));
+}
+
+Move Minimax::find_best_move(const ChessBoard& board,
+                             int max_depth,
+                             const SearchLimits& limits,
+                             std::vector<std::uint64_t> repetition_history) {
     last_completed_depth = 0;
     last_search_eval = 0;
+    last_best_move_changes = 0;
+    last_elapsed_ms = 0;
+    last_target_ms = limits.managed() ? std::min(limits.soft_ms, limits.hard_ms) : -1;
+    last_stop_reason = "max_depth";
+    last_ponder_hit = false;
+    last_ponder_depth = 0;
+    last_ponder_ms = 0;
+    active_limits = limits;
+    time_factor = 1;
+    ponder_credit_ms = 0;
+    use_time_limit = limits.timed();
+    stop_search = false;
+    if (use_time_limit) {
+        deadline = limits.start + std::chrono::milliseconds(limits.hard_ms);
+    }
+    const auto finish = [&](const Move& move, const char* reason) {
+        last_stop_reason = reason;
+        last_elapsed_ms = active_limits.elapsed_ms();
+        if (active_limits.pondering) {
+            last_ponder_ms = last_elapsed_ms;
+            last_ponder_depth = last_completed_depth;
+        }
+        use_time_limit = false;
+        stop_search = false;
+        return move;
+    };
     reset_node_stats();
+    MoveList moves;
+    generate_moves_into(board, board.turn, moves);
+    if (moves.empty()) {
+        last_search_eval = board.is_in_check(board.turn) ? -mate_score(0) : 0;
+        return finish(Move(-1, -1), "terminal");
+    }
+    if (is_draw_by_rule(board)) {
+        return finish(moves[0], "draw");
+    }
+    // Keep fixed-depth analysis semantics; timed play needs no search for a forced move.
+    if (limits.timed() && moves.size() == 1) {
+        return finish(moves[0], "forced_move");
+    }
+    if (is_time_up()) {
+        return finish(moves[0], last_stop_reason);
+    }
+
     advance_transposition_age();
     clear_eval_cache();
     clear_killer_moves();
     clear_counter_moves();
     clear_history_scores();
-    MoveList moves;
-    generate_moves_into(board, board.turn, moves);
-    if (moves.empty()) {
-        return Move(-1, -1);
-    }
-
-    (void)evaluate(board);
+    last_search_eval = evaluate(board);
 
     if (repetition_history.empty() || repetition_history.back() != board.position_key()) {
         repetition_history.push_back(board.position_key());
@@ -589,20 +712,14 @@ Move Minimax::find_best_move(const ChessBoard& board,
     Move best_move = moves[0];
 
     const int bounded_max_depth = std::max(1, max_depth);
-    const bool has_time_limit = time_limit_ms > 0;
-    if (has_time_limit) {
-        deadline = Clock::now() + std::chrono::milliseconds(time_limit_ms);
-    }
-
-    use_time_limit = has_time_limit;
-    stop_search = false;
     std::optional<Move> previous_best;
+    int stable_depths = 0;
 
     for (int current_search_depth = 1;
          current_search_depth <= bounded_max_depth;
          ++current_search_depth) {
-        if (has_time_limit && Clock::now() >= deadline) {
-            break;
+        if (is_time_up()) {
+            return finish(best_move, last_stop_reason);
         }
 
         stop_search = false;
@@ -612,16 +729,31 @@ Move Minimax::find_best_move(const ChessBoard& board,
         const Move candidate =
             search_root(board, current_search_depth, completed, search_eval, repetition_history, previous_best);
         if (!completed) {
-            break;
+            return finish(best_move, last_stop_reason);
         }
+        const bool changed = previous_best.has_value() && !same_move(candidate, *previous_best);
+        stable_depths = previous_best.has_value() && !changed ? stable_depths + 1 : 0;
+        last_best_move_changes += changed ? 1 : 0;
+        // Scores are side-to-move relative at this root. Do not compare depth 1
+        // against static eval, and clamp mate transitions before any multiplication.
+        const int eval_drop = previous_best.has_value()
+            ? std::clamp(last_search_eval - search_eval, 0, 100) : 0;
         best_move = candidate;
         previous_best = best_move;
         last_completed_depth = current_search_depth;
         last_search_eval = search_eval;
         last_node_stats = current_node_stats;
+        time_factor = search_time_factor(stable_depths, changed, eval_drop);
+        if (is_time_up()) {
+            return finish(best_move, last_stop_reason);
+        }
+        if (active_limits.managed() && !active_limits.pondering) {
+            last_target_ms = std::min(double(active_limits.hard_ms), active_limits.soft_ms * time_factor);
+            if (active_limits.elapsed_ms() + ponder_credit_ms >= last_target_ms) {
+                return finish(best_move, "soft_limit");
+            }
+        }
     }
 
-    use_time_limit = false;
-    stop_search = false;
-    return best_move;
+    return finish(best_move, "max_depth");
 }

@@ -206,9 +206,16 @@ class EngineWrapper:
             li.resign(game.id)
         else:
             li.make_move(game.id, best_move)
+            self.on_move_sent(board, best_move, can_ponder)
             chat_message = best_move.info.get("chat") if best_move.info else None
             if isinstance(chat_message, str) and chat_message:
                 li.chat(game.id, "player", chat_message)
+
+    def on_move_sent(self, board: chess.Board, result: chess.engine.PlayResult, can_ponder: bool) -> None:
+        """Optional homemade-engine hook after the server accepts our move."""
+
+    def on_game_state(self, board: chess.Board, active: bool) -> None:
+        """Optional homemade-engine hook for moves, takebacks and game completion."""
 
     def add_go_commands(self, time_limit: chess.engine.Limit) -> chess.engine.Limit:
         """Add extra commands to send to the engine. For example, to search for 1000 nodes or up to depth 10."""

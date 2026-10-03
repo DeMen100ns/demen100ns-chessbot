@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(chess_bot LANGUAGES CXX)
+find_package(Threads REQUIRED)
 
 if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
@@ -51,7 +52,7 @@ add_executable(chess_engine_bridge
     src/app/engine_bridge_main.cpp
 )
 
-target_link_libraries(chess_engine_bridge PRIVATE chess_engine)
+target_link_libraries(chess_engine_bridge PRIVATE chess_engine Threads::Threads)
 
 add_executable(prepare_bench_dataset
     src/bench/prepare_bench_dataset.cpp
@@ -97,6 +98,9 @@ add_engine_test(test_chessboard_backend tests/test_chessboard_backend.cpp)
 add_engine_test(test_minimax_regression tests/test_minimax_regression.cpp)
 add_engine_test(test_minimax_tt tests/test_minimax_tt.cpp)
 add_engine_test(test_bot_forced_ep tests/test_bot_forced_ep.cpp)
+add_engine_test(test_time_management tests/test_time_management.cpp)
+add_engine_test(test_ponder tests/test_ponder.cpp)
+target_link_libraries(test_ponder PRIVATE Threads::Threads)
 
 add_executable(bench_minimax
     tests/bench_minimax.cpp
@@ -112,6 +116,11 @@ add_executable(nnue_evaluate_fens
     nnue/evaluate_fens.cpp
 )
 target_link_libraries(nnue_evaluate_fens PRIVATE chess_engine)
+
+add_executable(nnue_annotate_static_eval
+    nnue/annotate_static_eval.cpp
+)
+target_link_libraries(nnue_annotate_static_eval PRIVATE chess_engine)
 
 add_executable(perft_tool
     perft/perft_tool.cpp

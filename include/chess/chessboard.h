@@ -3,11 +3,14 @@
 #include "chess/types.h"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
 
 struct ChessBoard {
+    static constexpr std::size_t kNnueMaxHiddenSize = 1024;
+
     std::array<Piece, 64> square_piece;
     std::array<std::uint64_t, 13> piece_bitboards;
     std::array<std::uint64_t, 2> color_bitboards;
@@ -21,7 +24,7 @@ struct ChessBoard {
     bool black_can_castle_kingside;
     bool black_can_castle_queenside;
     int en_passant_square;
-    mutable std::array<float, 128> nnue_accumulator;
+    mutable std::array<float, kNnueMaxHiddenSize> nnue_accumulator;
     mutable bool nnue_accumulator_valid;
 
     ChessBoard()

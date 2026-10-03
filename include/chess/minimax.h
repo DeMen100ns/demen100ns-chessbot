@@ -1,6 +1,7 @@
 #pragma once
 
 #include "chess/chessboard.h"
+#include "chess/search_limits.h"
 
 #include <array>
 #include <chrono>
@@ -22,6 +23,13 @@ struct Minimax {
     int depth;
     int last_completed_depth = 0;
     int last_search_eval = 0;
+    int last_best_move_changes = 0;
+    double last_elapsed_ms = 0;
+    double last_target_ms = -1;
+    const char* last_stop_reason = "not_started";
+    bool last_ponder_hit = false;
+    int last_ponder_depth = 0;
+    double last_ponder_ms = 0;
     static constexpr std::size_t kTranspositionTableSize = 1u << 20;
 
     explicit Minimax(int d = 3, std::size_t transposition_entries = kTranspositionTableSize)
@@ -34,10 +42,15 @@ struct Minimax {
                         int max_depth,
                         int time_limit_ms,
                         std::vector<std::uint64_t> repetition_history = {});
+    Move find_best_move(const ChessBoard& board,
+                        int max_depth,
+                        const SearchLimits& limits,
+                        std::vector<std::uint64_t> repetition_history = {});
     int get_last_completed_depth() const { return last_completed_depth; }
     int get_last_search_eval() const { return last_search_eval; }
     const NodeStats& get_last_node_stats() const { return last_node_stats; }
     void clear_transposition_table();
+    std::optional<Move> ponder_move(const ChessBoard& board, const Move& best_move) const;
 
 private:
     using Clock = std::chrono::steady_clock;
@@ -62,6 +75,9 @@ private:
     Clock::time_point deadline;
     bool use_time_limit = false;
     bool stop_search = false;
+    SearchLimits active_limits;
+    double time_factor = 1;
+    double ponder_credit_ms = 0;
     std::vector<TTEntry> transposition_table;
     int transposition_age = 0;
     std::array<std::array<std::optional<Move>, 2>, kMaxKillerPlies> killer_moves{};

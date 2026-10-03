@@ -36,6 +36,18 @@ int score_from_transposition(int score, int current_depth) {
 
 }  // namespace
 
+std::optional<Move> Minimax::ponder_move(const ChessBoard& board, const Move& best_move) const {
+    if (!board.valid_move(best_move, board.turn)) {
+        return std::nullopt;
+    }
+    const ChessBoard reply_board = board.make_move(best_move);
+    if (const auto entry = probe_transposition(reply_board, 0, 1);
+        entry.has_value() && reply_board.valid_move(entry->best_move, reply_board.turn)) {
+        return entry->best_move;
+    }
+    return std::nullopt;
+}
+
 void Minimax::clear_killer_moves() {
     for (auto& killer_slot : killer_moves) {
         killer_slot[0] = std::nullopt;

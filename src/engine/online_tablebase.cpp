@@ -188,7 +188,7 @@ bool OnlineTablebase::configure(const std::string& url, int request_timeout_ms) 
     return enabled;
 }
 
-std::optional<Move> OnlineTablebase::choose_move(const ChessBoard& board) const {
+std::optional<Move> OnlineTablebase::choose_move(const ChessBoard& board, bool cache_only) const {
     if (!enabled) {
         last_probe_debug = "tb_disabled";
         return std::nullopt;
@@ -219,6 +219,11 @@ std::optional<Move> OnlineTablebase::choose_move(const ChessBoard& board) const 
             ? "tb_hit_cache"
             : "tb_miss_cache";
         return cache_it->second;
+    }
+
+    if (cache_only) {
+        last_probe_debug = "tb_skipped_unbounded_probe";
+        return std::nullopt;
     }
 
     if (backend == TablebaseBackend::NativeFathom) {

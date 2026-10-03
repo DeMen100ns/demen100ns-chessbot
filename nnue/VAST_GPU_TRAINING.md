@@ -17,7 +17,7 @@ bash nnue/train_vast_gpu.sh
 Useful overrides:
 
 ```bash
-OUT_DIR=nnue/runs/basic_1m_h128_vast \
+OUT_DIR=nnue/runs/dual_halfka_h256_mlp32_vast \
 EPOCHS=80 \
 BATCH_SIZE=16384 \
 LR=0.001 \
@@ -31,9 +31,9 @@ Continue from a local checkpoint by calling the trainer directly:
 python3 nnue/train_basic_nnue.py \
   --train nnue/splits/train.json \
   --val nnue/splits/val.json \
-  --out-dir nnue/runs/basic_1m_h128_vast_continue \
-  --resume nnue/runs/basic_1m_h128_vast/basic_nnue.pt \
-  --hidden-size 128 \
+  --out-dir nnue/runs/dual_halfka_h256_mlp32_vast_continue \
+  --resume nnue/runs/dual_halfka_h256_mlp32_vast/basic_nnue.pt \
+  --hidden-size 256 \
   --epochs 40 \
   --batch-size 16384 \
   --lr 0.0003 \
