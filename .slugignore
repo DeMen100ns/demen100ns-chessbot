@@ -5,9 +5,4 @@ build-compare-release/
 cmake-build-*/
 lichess_bot_auto_logs/
 data/tablebases/
-nnue/cache/
-nnue/runs/
-nnue/data_*
-nnue/splits.zip
-nnue/splits/
-nnue/splits_static/
+archive/

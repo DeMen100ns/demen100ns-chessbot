@@ -21,20 +21,14 @@ int main() {
         const int eval1 = eval_engine.evaluate(board);
         const int eval2 = eval_engine.evaluate(board);
         assert(eval1 == eval2);
-        const int nnue_eval1 = eval_engine.evaluate_nnue(board);
-        const int nnue_eval2 = eval_engine.evaluate_nnue(board);
-        assert(nnue_eval1 == nnue_eval2);
 
-        (void)eval_engine.evaluate_nnue(board);
         const std::vector<Move> legal_moves = board.generate_moves(board.turn);
         for (std::size_t move_index = 0;
              move_index < legal_moves.size() && move_index < 16;
              ++move_index) {
-            const ChessBoard accumulated = board.make_move(legal_moves[move_index]);
-            const int accumulated_eval = eval_engine.evaluate_nnue(accumulated);
-            const ChessBoard rebuilt(ChessIO::board_to_fen(accumulated));
-            const int rebuilt_eval = eval_engine.evaluate_nnue(rebuilt);
-            assert(accumulated_eval == rebuilt_eval);
+            const ChessBoard played = board.make_move(legal_moves[move_index]);
+            const ChessBoard rebuilt(ChessIO::board_to_fen(played));
+            assert(eval_engine.evaluate(played) == eval_engine.evaluate(rebuilt));
         }
 
         for (int depth = 1; depth <= 4; ++depth) {
@@ -47,8 +41,8 @@ int main() {
     const ChessBoard start_white("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
     const ChessBoard start_black("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1");
     Minimax eval_engine(2);
-    assert(eval_engine.evaluate_nnue(start_white) == eval_engine.evaluate_nnue(start_white));
-    assert(eval_engine.evaluate_nnue(start_black) == eval_engine.evaluate_nnue(start_black));
+    assert(eval_engine.evaluate(start_white) == eval_engine.evaluate(start_white));
+    assert(eval_engine.evaluate(start_black) == eval_engine.evaluate(start_black));
 
     return 0;
 }

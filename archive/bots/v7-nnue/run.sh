@@ -2,13 +2,13 @@
 set -euo pipefail
 
 BOT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ROOT_DIR="$(cd "$BOT_DIR/../.." && pwd)"
-ENGINE_BIN="$BOT_DIR/v7.2-nnue"
+ROOT_DIR="$(cd "$BOT_DIR/../../.." && pwd)"
+ENGINE_BIN="$BOT_DIR/v7-nnue"
 TB_DIR="$ROOT_DIR/data/tablebases/3-4-5"
 
 if [[ ! -x "$ENGINE_BIN" ]]; then
   echo "Missing frozen bot binary: $ENGINE_BIN" >&2
-  echo "Run ./build_snapshot.sh inside bots/v7.2-nnue to create it." >&2
+  echo "Run ./build_snapshot.sh inside bots/v7-nnue to create it." >&2
   exit 1
 fi
 

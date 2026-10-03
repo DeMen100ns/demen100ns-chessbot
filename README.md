@@ -1,8 +1,8 @@
 # Chess Bot
 
-C++ chess engine playground with a macOS UI, benchmark tooling, frozen bot snapshots, an optional NNUE evaluator, and a local bridge for `lichess-bot`.
+C++ chess engine playground with a macOS UI, benchmark tooling, frozen bot snapshots, and a local bridge for `lichess-bot`.
 
-The bot's default search path uses `Minimax::evaluate()`, the handcrafted pre-NNUE evaluator. The NNUE implementation is still available as `Minimax::evaluate_nnue()` for experiments and regression checks, but it is not the default evaluator used by the bot.
+The search uses `Minimax::evaluate()`, a handcrafted tapered evaluator: material, piece-square tables, mobility, rook files, king safety, and pawn structure.
 
 ## Quick Start
 
@@ -29,7 +29,8 @@ src/bench-time/              timing benchmarks
 tests/                       assert-based engine tests
 perft/                       perft CLI and helper script
 bots/                        benchable bot snapshots and adapters
-nnue/                        NNUE training/evaluation scripts and artifacts
+benchmarks/versions/         frozen-version speed benchmark and report
+archive/                     retired snapshots and experiments (not built or deployed)
 integrations/lichess-bot/    vendored lichess-bot integration
 third_party/                 tablebase probing dependency
 tools/                       tablebase probe helpers
@@ -73,7 +74,7 @@ Useful smoke suite:
 ./build-release/test_minimax_tt
 ```
 
-`test_minimax_regression` checks both the default handcrafted evaluator and the standalone NNUE evaluator for deterministic behavior.
+`test_minimax_regression` checks that evaluation is deterministic, that a board reached by making a move evaluates the same as the board rebuilt from its FEN, and that search returns legal moves.
 
 ## Run The Engine Bridge
 
@@ -132,6 +133,8 @@ Compare two source trees:
 ./bench_compare --old /path/to/chess-old --new /path/to/chess-new minimax
 ```
 
+Compare the frozen bot snapshots (time to fixed depth): see `benchmarks/versions/REPORT.md`.
+
 ## Bot Folder Contract
 
 Each benchable bot folder contains a `bot.json` manifest and an executable entry, usually `run.sh`.
@@ -172,28 +175,6 @@ export STOCKFISH_BENCH_MOVETIME_MS=50
 ```
 
 If `CHESS_STOCKFISH_PATH` is unset, the adapter checks common Homebrew paths and then `stockfish` from `PATH`.
-
-## NNUE
-
-NNUE code lives under `nnue/`.
-
-Common workflow:
-
-```bash
-python3 nnue/train_basic_nnue.py --help
-./build --target nnue_evaluate_fens
-```
-
-Generated weights are exported into:
-
-```text
-include/chess/nnue_basic_weights.h
-```
-
-The engine keeps both evaluators:
-
-- `Minimax::evaluate()` is the default handcrafted evaluator used by search.
-- `Minimax::evaluate_nnue()` runs the embedded NNUE evaluator for experiments/tests.
 
 ## Lichess Bot
 
@@ -243,3 +224,9 @@ Notable ignored files/directories:
 - `data/lichess_db_standard_rated_2014-01.pgn`
 
 Keep raw PGN/tablebase/training files larger than 100 MB local unless they are deliberately moved to a proper large-file storage flow.
+
+## Future Work
+
+- NNUE evaluation. Earlier NNUE experiments (training scripts, datasets, weights, and the old
+  v7 / v7.2 snapshots) are kept in `archive/`. `archive/README.md` lists what was measured and
+  how to restore the engine code.

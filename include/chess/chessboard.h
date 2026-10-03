@@ -9,8 +9,6 @@
 #include <vector>
 
 struct ChessBoard {
-    static constexpr std::size_t kNnueMaxHiddenSize = 1024;
-
     std::array<Piece, 64> square_piece;
     std::array<std::uint64_t, 13> piece_bitboards;
     std::array<std::uint64_t, 2> color_bitboards;
@@ -24,8 +22,6 @@ struct ChessBoard {
     bool black_can_castle_kingside;
     bool black_can_castle_queenside;
     int en_passant_square;
-    mutable std::array<float, kNnueMaxHiddenSize> nnue_accumulator;
-    mutable bool nnue_accumulator_valid;
 
     ChessBoard()
         : square_piece{},
@@ -40,9 +36,7 @@ struct ChessBoard {
           white_can_castle_queenside(false),
           black_can_castle_kingside(false),
           black_can_castle_queenside(false),
-          en_passant_square(-1),
-          nnue_accumulator{},
-          nnue_accumulator_valid(false) {}
+          en_passant_square(-1) {}
 
     explicit ChessBoard(const std::string& fen);
 

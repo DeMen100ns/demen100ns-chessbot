@@ -1,0 +1,514 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index a5fdd04..5cca365 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -112,16 +112,6 @@ add_executable(bench_time
+ )
+ target_link_libraries(bench_time PRIVATE chess_engine)
+ 
+-add_executable(nnue_evaluate_fens
+-    nnue/evaluate_fens.cpp
+-)
+-target_link_libraries(nnue_evaluate_fens PRIVATE chess_engine)
+-
+-add_executable(nnue_annotate_static_eval
+-    nnue/annotate_static_eval.cpp
+-)
+-target_link_libraries(nnue_annotate_static_eval PRIVATE chess_engine)
+-
+ add_executable(perft_tool
+     perft/perft_tool.cpp
+ )
+diff --git a/include/chess/chessboard.h b/include/chess/chessboard.h
+index b4409d9..4b96314 100644
+--- a/include/chess/chessboard.h
++++ b/include/chess/chessboard.h
+@@ -9,8 +9,6 @@
+ #include <vector>
+ 
+ struct ChessBoard {
+-    static constexpr std::size_t kNnueMaxHiddenSize = 1024;
+-
+     std::array<Piece, 64> square_piece;
+     std::array<std::uint64_t, 13> piece_bitboards;
+     std::array<std::uint64_t, 2> color_bitboards;
+@@ -24,8 +22,6 @@ struct ChessBoard {
+     bool black_can_castle_kingside;
+     bool black_can_castle_queenside;
+     int en_passant_square;
+-    mutable std::array<float, kNnueMaxHiddenSize> nnue_accumulator;
+-    mutable bool nnue_accumulator_valid;
+ 
+     ChessBoard()
+         : square_piece{},
+@@ -40,9 +36,7 @@ struct ChessBoard {
+           white_can_castle_queenside(false),
+           black_can_castle_kingside(false),
+           black_can_castle_queenside(false),
+-          en_passant_square(-1),
+-          nnue_accumulator{},
+-          nnue_accumulator_valid(false) {}
++          en_passant_square(-1) {}
+ 
+     explicit ChessBoard(const std::string& fen);
+ 
+diff --git a/include/chess/minimax.h b/include/chess/minimax.h
+index 9ea700e..18d1cbf 100644
+--- a/include/chess/minimax.h
++++ b/include/chess/minimax.h
+@@ -37,7 +37,6 @@ struct Minimax {
+           transposition_table(transposition_entries) {}
+ 
+     int evaluate(const ChessBoard& board);
+-    int evaluate_nnue(const ChessBoard& board);
+     Move find_best_move(const ChessBoard& board,
+                         int max_depth,
+                         int time_limit_ms,
+diff --git a/src/engine/chessboard_state.cpp b/src/engine/chessboard_state.cpp
+index b1ebc6d..ac5ba61 100644
+--- a/src/engine/chessboard_state.cpp
++++ b/src/engine/chessboard_state.cpp
+@@ -1,127 +1,7 @@
+ #include "chess/chessboard.h"
+ 
+-#include "chess/nnue_basic_weights.h"
+ #include "chessboard_internal.h"
+ 
+-#ifndef CHESS_NNUE_DUAL_PERSPECTIVE
+-#define CHESS_NNUE_DUAL_PERSPECTIVE 0
+-#endif
+-
+-#if CHESS_NNUE_DUAL_PERSPECTIVE
+-static_assert(ChessNnueWeights::kOutputHiddenSize <=
+-                  static_cast<int>(ChessBoard::kNnueMaxHiddenSize),
+-              "ChessBoard NNUE accumulator storage must fit NNUE output hidden size");
+-#else
+-static_assert(ChessNnueWeights::kHiddenSize <=
+-                  static_cast<int>(ChessBoard::kNnueMaxHiddenSize),
+-              "ChessBoard NNUE accumulator storage must fit NNUE hidden size");
+-#endif
+-
+-namespace {
+-
+-constexpr int kPieceFeatureCount = 2 * 6 * 64;
+-constexpr int kHalfKaFeatureCount = 64 * 64 * 11;
+-constexpr int kWhiteToMoveFeatureIndex = kPieceFeatureCount;
+-constexpr int kBlackToMoveFeatureIndex = kPieceFeatureCount + 1;
+-
+-bool uses_halfka_features() {
+-    return ChessNnueWeights::kInputFeatures == kHalfKaFeatureCount;
+-}
+-
+-int nnue_piece_type(Piece piece) {
+-    switch (piece) {
+-        case W_PAWN:
+-        case B_PAWN:
+-            return 0;
+-        case W_KNIGHT:
+-        case B_KNIGHT:
+-            return 1;
+-        case W_BISHOP:
+-        case B_BISHOP:
+-            return 2;
+-        case W_ROOK:
+-        case B_ROOK:
+-            return 3;
+-        case W_QUEEN:
+-        case B_QUEEN:
+-            return 4;
+-        case W_KING:
+-        case B_KING:
+-            return 5;
+-        case EMPTY:
+-            return -1;
+-    }
+-
+-    return -1;
+-}
+-
+-int nnue_base_feature_index(Piece piece, int square) {
+-    const Color color = is_white_piece(piece) ? WHITE : BLACK;
+-    return static_cast<int>(color) * 6 * 64 + nnue_piece_type(piece) * 64 + square;
+-}
+-
+-void update_nnue_accumulator_feature(ChessBoard& board, Piece piece, int square, float scale) {
+-    if (!board.nnue_accumulator_valid || piece == EMPTY) {
+-        return;
+-    }
+-
+-#if CHESS_NNUE_DUAL_PERSPECTIVE
+-    board.nnue_accumulator_valid = false;
+-    (void)square;
+-    (void)scale;
+-    return;
+-#else
+-    if (uses_halfka_features()) {
+-        board.nnue_accumulator_valid = false;
+-        return;
+-    }
+-
+-    const int feature_index = nnue_base_feature_index(piece, square);
+-    if (feature_index >= ChessNnueWeights::kInputFeatures) {
+-        return;
+-    }
+-
+-    const float* feature_weights =
+-        ChessNnueWeights::kFc1WeightByFeature[feature_index];
+-    for (int hidden_index = 0; hidden_index < ChessNnueWeights::kHiddenSize; ++hidden_index) {
+-        board.nnue_accumulator[static_cast<std::size_t>(hidden_index)] +=
+-            scale * feature_weights[hidden_index];
+-    }
+-#endif
+-}
+-
+-void update_nnue_accumulator_turn_feature(ChessBoard& board, Color color, float scale) {
+-    if (!board.nnue_accumulator_valid) {
+-        return;
+-    }
+-
+-#if CHESS_NNUE_DUAL_PERSPECTIVE
+-    board.nnue_accumulator_valid = false;
+-    (void)color;
+-    (void)scale;
+-    return;
+-#else
+-    if (uses_halfka_features()) {
+-        board.nnue_accumulator_valid = false;
+-        return;
+-    }
+-
+-    const int feature_index =
+-        color == WHITE ? kWhiteToMoveFeatureIndex : kBlackToMoveFeatureIndex;
+-    if (feature_index >= ChessNnueWeights::kInputFeatures) {
+-        return;
+-    }
+-
+-    const float* feature_weights = ChessNnueWeights::kFc1WeightByFeature[feature_index];
+-    for (int hidden_index = 0; hidden_index < ChessNnueWeights::kHiddenSize; ++hidden_index) {
+-        board.nnue_accumulator[static_cast<std::size_t>(hidden_index)] +=
+-            scale * feature_weights[hidden_index];
+-    }
+-#endif
+-}
+-
+-}  // namespace
+-
+ void ChessBoard::clear_square(int square) {
+     Piece& square_entry = square_piece[static_cast<std::size_t>(square)];
+     const Piece piece = square_entry;
+@@ -129,8 +9,6 @@ void ChessBoard::clear_square(int square) {
+         return;
+     }
+ 
+-    update_nnue_accumulator_feature(*this, piece, square, -1.0F);
+-
+     const Bitboard bit = square_bb(square);
+     square_entry = EMPTY;
+     piece_bitboards[static_cast<std::size_t>(piece)] &= ~bit;
+@@ -148,8 +26,6 @@ void ChessBoard::set_square(int square, Piece piece) {
+         return;
+     }
+ 
+-    update_nnue_accumulator_feature(*this, piece, square, 1.0F);
+-
+     const Bitboard bit = square_bb(square);
+     square_piece[static_cast<std::size_t>(square)] = piece;
+     piece_bitboards[static_cast<std::size_t>(piece)] |= bit;
+@@ -162,13 +38,7 @@ void ChessBoard::set_square(int square, Piece piece) {
+ }
+ 
+ void ChessBoard::set_turn(Color color) {
+-    if (turn == color) {
+-        return;
+-    }
+-
+-    update_nnue_accumulator_turn_feature(*this, turn, -1.0F);
+     turn = color;
+-    update_nnue_accumulator_turn_feature(*this, turn, 1.0F);
+ }
+ 
+ void ChessBoard::initialize() {
+@@ -176,8 +46,6 @@ void ChessBoard::initialize() {
+     piece_bitboards.fill(0);
+     color_bitboards.fill(0);
+     occupied = 0;
+-    nnue_accumulator.fill(0.0F);
+-    nnue_accumulator_valid = false;
+     zobrist_key = 0;
+     turn = WHITE;
+     turn_number = 1;
+diff --git a/src/engine/minimax_eval.cpp b/src/engine/minimax_eval.cpp
+index 8c83dbf..160b131 100644
+--- a/src/engine/minimax_eval.cpp
++++ b/src/engine/minimax_eval.cpp
+@@ -1,17 +1,10 @@
+ #include "minimax_internal.h"
+ 
+-#include "chess/nnue_basic_weights.h"
+-
+ #include <algorithm>
+ #include <array>
+-#include <cmath>
+ #include <cstddef>
+ #include <cstdint>
+ 
+-#ifndef CHESS_NNUE_DUAL_PERSPECTIVE
+-#define CHESS_NNUE_DUAL_PERSPECTIVE 0
+-#endif
+-
+ namespace {
+ 
+ using namespace MinimaxInternal;
+@@ -598,213 +591,3 @@ int Minimax::evaluate(const ChessBoard& board) {
+ 
+     return (mg_score * mg_phase + eg_score * eg_phase) / 24;
+ }
+-
+-int Minimax::evaluate_nnue(const ChessBoard& board) {
+-#if CHESS_NNUE_DUAL_PERSPECTIVE
+-    static_assert(ChessNnueWeights::kPerspectiveCount == 2,
+-                  "dual-perspective NNUE expects exactly two perspectives");
+-    static_assert(ChessNnueWeights::kOutputHiddenSize <=
+-                      static_cast<int>(ChessBoard::kNnueMaxHiddenSize),
+-                  "ChessBoard NNUE accumulator storage must fit NNUE output hidden size");
+-#else
+-    static_assert(ChessNnueWeights::kHiddenSize <=
+-                      static_cast<int>(ChessBoard::kNnueMaxHiddenSize),
+-                  "ChessBoard NNUE accumulator storage must fit NNUE hidden size");
+-#endif
+-    constexpr int kPieceFeatureCount = 2 * 6 * 64;
+-    constexpr int kWhiteToMoveFeatureIndex = kPieceFeatureCount;
+-    constexpr int kBlackToMoveFeatureIndex = kPieceFeatureCount + 1;
+-    constexpr int kHalfKaPieceKindCount = 11;
+-    constexpr int kHalfKaSquareCount = 64;
+-    constexpr int kHalfKaFeatureCount =
+-        kHalfKaSquareCount * kHalfKaSquareCount * kHalfKaPieceKindCount;
+-#if CHESS_NNUE_DUAL_PERSPECTIVE
+-    constexpr bool uses_halfka_features = true;
+-#else
+-    const bool uses_halfka_features =
+-        ChessNnueWeights::kInputFeatures == kHalfKaFeatureCount;
+-#endif
+-    const auto perspective_square = [](int square, Color perspective) {
+-        return perspective == WHITE ? square : (square ^ 56);
+-    };
+-    const auto halfka_piece_kind = [](Piece piece, Color perspective) {
+-        const int type = piece_type_index(piece);
+-        if (type == 5) {
+-            return 10;
+-        }
+-        const bool is_ours = piece_color(piece) == perspective;
+-        return type * 2 + (is_ours ? 1 : 0);
+-    };
+-    const auto halfka_feature_index = [&](Piece piece, int square, Color perspective) {
+-        const int king_square = find_king_square(board, perspective);
+-        if (king_square < 0) {
+-            return -1;
+-        }
+-        const int perspective_king_square = perspective_square(king_square, perspective);
+-        const int perspective_piece_square = perspective_square(square, perspective);
+-        return (perspective_king_square * kHalfKaSquareCount +
+-                perspective_piece_square) *
+-                   kHalfKaPieceKindCount +
+-               halfka_piece_kind(piece, perspective);
+-    };
+-
+-    if (!board.nnue_accumulator_valid) {
+-#if CHESS_NNUE_DUAL_PERSPECTIVE
+-        for (int perspective_index = 0;
+-             perspective_index < ChessNnueWeights::kPerspectiveCount;
+-             ++perspective_index) {
+-            const int accumulator_offset =
+-                perspective_index * ChessNnueWeights::kHiddenSize;
+-            for (int hidden_index = 0;
+-                 hidden_index < ChessNnueWeights::kHiddenSize;
+-                 ++hidden_index) {
+-                board.nnue_accumulator[
+-                    static_cast<std::size_t>(accumulator_offset + hidden_index)
+-                ] = ChessNnueWeights::kFc1BiasByPerspective[perspective_index][hidden_index];
+-            }
+-        }
+-
+-        const Color perspectives[ChessNnueWeights::kPerspectiveCount] = {
+-            board.turn,
+-            opposite_color(board.turn),
+-        };
+-        for (int piece = W_PAWN; piece <= B_KING; ++piece) {
+-            Bitboard pieces = board.piece_bitboard(static_cast<Piece>(piece));
+-            while (pieces != 0) {
+-                const int square = pop_lsb(pieces);
+-                const Piece current_piece = static_cast<Piece>(piece);
+-                for (int perspective_index = 0;
+-                     perspective_index < ChessNnueWeights::kPerspectiveCount;
+-                     ++perspective_index) {
+-                    const int feature_index =
+-                        halfka_feature_index(current_piece, square, perspectives[perspective_index]);
+-                    if (feature_index < 0 || feature_index >= ChessNnueWeights::kInputFeatures) {
+-                        continue;
+-                    }
+-                    const float* feature_weights =
+-                        ChessNnueWeights::kFc1WeightByPerspectiveFeature
+-                            [perspective_index][feature_index];
+-                    const int accumulator_offset =
+-                        perspective_index * ChessNnueWeights::kHiddenSize;
+-                    for (int hidden_index = 0;
+-                         hidden_index < ChessNnueWeights::kHiddenSize;
+-                         ++hidden_index) {
+-                        board.nnue_accumulator[
+-                            static_cast<std::size_t>(accumulator_offset + hidden_index)
+-                        ] += feature_weights[hidden_index];
+-                    }
+-                }
+-            }
+-        }
+-#else
+-        for (int index = 0; index < ChessNnueWeights::kHiddenSize; ++index) {
+-            board.nnue_accumulator[static_cast<std::size_t>(index)] =
+-                ChessNnueWeights::kFc1Bias[index];
+-        }
+-
+-        for (int piece = W_PAWN; piece <= B_KING; ++piece) {
+-            Bitboard pieces = board.piece_bitboard(static_cast<Piece>(piece));
+-            while (pieces != 0) {
+-                const int square = pop_lsb(pieces);
+-                const Piece current_piece = static_cast<Piece>(piece);
+-                int feature_index = -1;
+-                if (uses_halfka_features) {
+-                    feature_index = halfka_feature_index(current_piece, square, board.turn);
+-                } else {
+-                    const int type = piece_type_index(current_piece);
+-                    const Color color = piece_color(current_piece);
+-                    feature_index = static_cast<int>(color) * 6 * 64 + type * 64 + square;
+-                }
+-                if (feature_index < 0 || feature_index >= ChessNnueWeights::kInputFeatures) {
+-                    continue;
+-                }
+-                const float* feature_weights =
+-                    ChessNnueWeights::kFc1WeightByFeature[feature_index];
+-
+-                for (int hidden_index = 0;
+-                     hidden_index < ChessNnueWeights::kHiddenSize;
+-                     ++hidden_index) {
+-                    board.nnue_accumulator[static_cast<std::size_t>(hidden_index)] +=
+-                        feature_weights[hidden_index];
+-                }
+-            }
+-        }
+-
+-        const int side_to_move_feature =
+-            board.turn == WHITE ? kWhiteToMoveFeatureIndex : kBlackToMoveFeatureIndex;
+-        if (!uses_halfka_features &&
+-            side_to_move_feature < ChessNnueWeights::kInputFeatures) {
+-            const float* feature_weights =
+-                ChessNnueWeights::kFc1WeightByFeature[side_to_move_feature];
+-            for (int hidden_index = 0;
+-                 hidden_index < ChessNnueWeights::kHiddenSize;
+-                 ++hidden_index) {
+-                board.nnue_accumulator[static_cast<std::size_t>(hidden_index)] +=
+-                    feature_weights[hidden_index];
+-            }
+-        }
+-#endif
+-
+-        board.nnue_accumulator_valid = true;
+-    }
+-
+-#if CHESS_NNUE_DUAL_PERSPECTIVE
+-    const auto clipped_relu = [](float value) {
+-        return std::min(1.0F, std::max(0.0F, value));
+-    };
+-    std::array<float, ChessNnueWeights::kOutputLayer1Size> output_layer1{};
+-    for (int output_index = 0;
+-         output_index < ChessNnueWeights::kOutputLayer1Size;
+-         ++output_index) {
+-        float value = ChessNnueWeights::kOutputLayer1Bias[output_index];
+-        for (int hidden_index = 0;
+-             hidden_index < ChessNnueWeights::kOutputHiddenSize;
+-             ++hidden_index) {
+-            const float activated =
+-                clipped_relu(board.nnue_accumulator[static_cast<std::size_t>(hidden_index)]);
+-            value += activated *
+-                     ChessNnueWeights::kOutputLayer1Weight[output_index][hidden_index];
+-        }
+-        output_layer1[static_cast<std::size_t>(output_index)] = clipped_relu(value);
+-    }
+-
+-    std::array<float, ChessNnueWeights::kOutputLayer2Size> output_layer2{};
+-    for (int output_index = 0;
+-         output_index < ChessNnueWeights::kOutputLayer2Size;
+-         ++output_index) {
+-        float value = ChessNnueWeights::kOutputLayer2Bias[output_index];
+-        for (int input_index = 0;
+-             input_index < ChessNnueWeights::kOutputLayer1Size;
+-             ++input_index) {
+-            value += output_layer1[static_cast<std::size_t>(input_index)] *
+-                     ChessNnueWeights::kOutputLayer2Weight[output_index][input_index];
+-        }
+-        output_layer2[static_cast<std::size_t>(output_index)] = clipped_relu(value);
+-    }
+-
+-    float score = ChessNnueWeights::kOutputLayer3Bias;
+-    for (int input_index = 0;
+-         input_index < ChessNnueWeights::kOutputLayer2Size;
+-         ++input_index) {
+-        score += output_layer2[static_cast<std::size_t>(input_index)] *
+-                 ChessNnueWeights::kOutputLayer3Weight[input_index];
+-    }
+-
+-    return static_cast<int>(std::lround(score));
+-#else
+-    float score = ChessNnueWeights::kFc2Bias;
+-    for (int hidden_index = 0; hidden_index < ChessNnueWeights::kHiddenSize; ++hidden_index) {
+-        const float pre_activation =
+-            board.nnue_accumulator[static_cast<std::size_t>(hidden_index)];
+-        const float relu_activation = std::max(0.0F, pre_activation);
+-        const float activated =
+-            uses_halfka_features ? std::min(1.0F, relu_activation) : relu_activation;
+-        score += activated * ChessNnueWeights::kFc2Weight[hidden_index];
+-    }
+-
+-    const int rounded_score = static_cast<int>(std::lround(score));
+-    return uses_halfka_features
+-        ? rounded_score
+-        : (board.turn == WHITE ? rounded_score : -rounded_score);
+-#endif
+-}
+diff --git a/tests/test_minimax_regression.cpp b/tests/test_minimax_regression.cpp
+index ac2052c..30533ab 100644
+--- a/tests/test_minimax_regression.cpp
++++ b/tests/test_minimax_regression.cpp
+@@ -21,20 +21,14 @@ int main() {
+         const int eval1 = eval_engine.evaluate(board);
+         const int eval2 = eval_engine.evaluate(board);
+         assert(eval1 == eval2);
+-        const int nnue_eval1 = eval_engine.evaluate_nnue(board);
+-        const int nnue_eval2 = eval_engine.evaluate_nnue(board);
+-        assert(nnue_eval1 == nnue_eval2);
+ 
+-        (void)eval_engine.evaluate_nnue(board);
+         const std::vector<Move> legal_moves = board.generate_moves(board.turn);
+         for (std::size_t move_index = 0;
+              move_index < legal_moves.size() && move_index < 16;
+              ++move_index) {
+-            const ChessBoard accumulated = board.make_move(legal_moves[move_index]);
+-            const int accumulated_eval = eval_engine.evaluate_nnue(accumulated);
+-            const ChessBoard rebuilt(ChessIO::board_to_fen(accumulated));
+-            const int rebuilt_eval = eval_engine.evaluate_nnue(rebuilt);
+-            assert(accumulated_eval == rebuilt_eval);
++            const ChessBoard played = board.make_move(legal_moves[move_index]);
++            const ChessBoard rebuilt(ChessIO::board_to_fen(played));
++            assert(eval_engine.evaluate(played) == eval_engine.evaluate(rebuilt));
+         }
+ 
+         for (int depth = 1; depth <= 4; ++depth) {
+@@ -47,8 +41,8 @@ int main() {
+     const ChessBoard start_white("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+     const ChessBoard start_black("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1");
+     Minimax eval_engine(2);
+-    assert(eval_engine.evaluate_nnue(start_white) == eval_engine.evaluate_nnue(start_white));
+-    assert(eval_engine.evaluate_nnue(start_black) == eval_engine.evaluate_nnue(start_black));
++    assert(eval_engine.evaluate(start_white) == eval_engine.evaluate(start_white));
++    assert(eval_engine.evaluate(start_black) == eval_engine.evaluate(start_black));
+ 
+     return 0;
+ }
